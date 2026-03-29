@@ -7,6 +7,7 @@ import { parseStringPromise } from 'xml2js';
 const BASE_URL = `http://${process.env.HIK_IP}:${process.env.HIK_PORT}`;
 const DIGEST_RETRY_ATTEMPTS = 2;
 const AUTH_DEBUG_ENABLED = process.env.HIK_DEBUG_AUTH === '1';
+const REMOTE_CONTROL_PASSWORD_PATTERN = /^\d{6}$/;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -78,12 +79,30 @@ async function requestIsapi(path, init = {}) {
     logAuthDebug('Digest auth request returned 401', res, attempt);
 
     if (attempt === DIGEST_RETRY_ATTEMPTS) {
+      const challenge = res.headers.get('www-authenticate');
       const text = await res.text();
-      throw new Error(`Device returned ${res.status}: ${text}`);
+      const challengeSuffix = challenge ? '' : ' without a digest challenge';
+      throw new Error(`Device returned ${res.status} for ${path}${challengeSuffix}: ${text}`);
     }
   }
 
   throw new Error('Device request failed before receiving a response');
+}
+
+function getRemoteDoorPassword() {
+  const remotePassword = process.env.HIK_REMOTE_PASSWORD?.trim();
+
+  if (!REMOTE_CONTROL_PASSWORD_PATTERN.test(remotePassword ?? '')) {
+    const message = 'Bridge misconfiguration: HIK_REMOTE_PASSWORD must be set to a 6-digit code for unlock_door';
+    console.error(`[hik] ${message}`);
+    throw new Error(message);
+  }
+
+  return remotePassword;
+}
+
+function buildUnlockDoorBody(remotePassword) {
+  return `<?xml version="1.0" encoding="UTF-8"?><RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><cmd>open</cmd><remotePassword>${remotePassword}</remotePassword></RemoteControlDoor>`;
 }
 
 async function parseResponse(res) {
@@ -114,12 +133,13 @@ function xmlHeaders() {
  * @param {number} doorNo - Door number (usually 1)
  */
 export async function unlockDoor(doorNo = 1) {
+  const remotePassword = getRemoteDoorPassword();
   const res = await requestIsapi(
     `/ISAPI/AccessControl/RemoteControl/door/${doorNo}`,
     {
       method: 'PUT',
       headers: xmlHeaders(),
-      body: `<?xml version="1.0" encoding="UTF-8"?><RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>`,
+      body: buildUnlockDoorBody(remotePassword),
     }
   );
   return await parseResponse(res);

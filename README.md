@@ -43,10 +43,13 @@ HIK_IP=192.168.100.192
 HIK_PORT=80
 HIK_USERNAME=Admin
 HIK_PASSWORD=your_device_password
+HIK_REMOTE_PASSWORD=123456
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
+
+`HIK_REMOTE_PASSWORD` must match the 6-digit remote door password configured on the device in iVMS-4200 / access control settings. The bridge needs that extra credential specifically for `unlock_door`.
 
 ### 4. Run the service
 ```bash
@@ -143,3 +146,8 @@ await supabase.from('access_control_jobs').insert({
 
 **Jobs failing with auth errors**
 - Verify `HIK_USERNAME` and `HIK_PASSWORD` in `.env` match the device credentials
+
+**`unlock_door` fails with 401**
+- Verify `HIK_REMOTE_PASSWORD` is set in `.env`
+- Verify the same 6-digit remote door password is configured on the device
+- Test the unlock endpoint with `curl --digest` and a `RemoteControlDoor` XML body that includes `<remotePassword>`
