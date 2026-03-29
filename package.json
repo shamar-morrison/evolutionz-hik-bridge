@@ -1,0 +1,17 @@
+{
+  "name": "evolutionz-hik-bridge",
+  "version": "1.0.0",
+  "description": "Bridge service between Evolutionz gym management PWA and HiKVision access control device",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.0",
+    "digest-fetch": "^3.0.0",
+    "dotenv": "^16.4.5",
+    "xml2js": "^0.6.2"
+  }
+}
