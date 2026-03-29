@@ -5,15 +5,86 @@ import DigestFetch from 'digest-fetch';
 import { parseStringPromise } from 'xml2js';
 
 const BASE_URL = `http://${process.env.HIK_IP}:${process.env.HIK_PORT}`;
-
-// DigestFetch handles the Digest Auth handshake automatically
-const client = new DigestFetch(
-  process.env.HIK_USERNAME,
-  process.env.HIK_PASSWORD,
-  { retry: true }
-);
+const DIGEST_RETRY_ATTEMPTS = 2;
+const AUTH_DEBUG_ENABLED = process.env.HIK_DEBUG_AUTH === '1';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function createDigestClient() {
+  return new DigestFetch(
+    process.env.HIK_USERNAME,
+    process.env.HIK_PASSWORD
+  );
+}
+
+function buildUrl(path) {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
+  return `${BASE_URL}${path}`;
+}
+
+function cloneHeaders(headers) {
+  if (!headers) {
+    return undefined;
+  }
+
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    return new Headers(headers);
+  }
+
+  if (Array.isArray(headers)) {
+    return new Headers(headers);
+  }
+
+  return { ...headers };
+}
+
+function cloneRequestOptions(init = {}) {
+  const nextOptions = { ...init };
+
+  if (init.headers) {
+    nextOptions.headers = cloneHeaders(init.headers);
+  }
+
+  return nextOptions;
+}
+
+function logAuthDebug(message, res, attempt) {
+  if (!AUTH_DEBUG_ENABLED) {
+    return;
+  }
+
+  const challenge = res.headers.get('www-authenticate');
+  const challengeSuffix = challenge ? ` challenge=${challenge}` : '';
+
+  console.warn(
+    `[hik] ${message} attempt=${attempt} status=${res.status}${challengeSuffix}`
+  );
+}
+
+async function requestIsapi(path, init = {}) {
+  const url = buildUrl(path);
+
+  for (let attempt = 1; attempt <= DIGEST_RETRY_ATTEMPTS; attempt += 1) {
+    const client = createDigestClient();
+    const res = await client.fetch(url, cloneRequestOptions(init));
+
+    if (res.status !== 401) {
+      return res;
+    }
+
+    logAuthDebug('Digest auth request returned 401', res, attempt);
+
+    if (attempt === DIGEST_RETRY_ATTEMPTS) {
+      const text = await res.text();
+      throw new Error(`Device returned ${res.status}: ${text}`);
+    }
+  }
+
+  throw new Error('Device request failed before receiving a response');
+}
 
 async function parseResponse(res) {
   const text = await res.text();
@@ -43,8 +114,8 @@ function xmlHeaders() {
  * @param {number} doorNo - Door number (usually 1)
  */
 export async function unlockDoor(doorNo = 1) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/RemoteControl/door/${doorNo}`,
+  const res = await requestIsapi(
+    `/ISAPI/AccessControl/RemoteControl/door/${doorNo}`,
     {
       method: 'PUT',
       headers: xmlHeaders(),
@@ -66,8 +137,8 @@ export async function unlockDoor(doorNo = 1) {
  * @param {string} user.endTime     - ISO date string e.g. '2027-01-01T00:00:00'
  */
 export async function addUser({ employeeNo, name, userType = 'normal', beginTime, endTime }) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/UserInfo/SetUp?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/UserInfo/SetUp?format=json',
     {
       method: 'POST',
       headers: jsonHeaders(),
@@ -95,8 +166,8 @@ export async function addUser({ employeeNo, name, userType = 'normal', beginTime
  * @param {string} employeeNo - Member's ID
  */
 export async function deleteUser(employeeNo) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/UserInfo/Delete?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/UserInfo/Delete?format=json',
     {
       method: 'PUT',
       headers: jsonHeaders(),
@@ -115,8 +186,8 @@ export async function deleteUser(employeeNo) {
  * @param {string} employeeNo - Member's ID
  */
 export async function getUser(employeeNo) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/UserInfo/Search?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/UserInfo/Search?format=json',
     {
       method: 'POST',
       headers: jsonHeaders(),
@@ -141,8 +212,8 @@ export async function getUser(employeeNo) {
  * @param {string} cardNo     - The card number (printed on the physical card)
  */
 export async function addCard(employeeNo, cardNo) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/CardInfo/SetUp?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/CardInfo/SetUp?format=json',
     {
       method: 'POST',
       headers: jsonHeaders(),
@@ -164,8 +235,8 @@ export async function addCard(employeeNo, cardNo) {
  * @param {string} cardNo     - The card number to revoke
  */
 export async function revokeCard(employeeNo, cardNo) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/CardInfo/Delete?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/CardInfo/Delete?format=json',
     {
       method: 'PUT',
       headers: jsonHeaders(),
@@ -184,8 +255,8 @@ export async function revokeCard(employeeNo, cardNo) {
  * @param {string} employeeNo - Member's ID
  */
 export async function getCard(employeeNo) {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/CardInfo/Search?format=json`,
+  const res = await requestIsapi(
+    '/ISAPI/AccessControl/CardInfo/Search?format=json',
     {
       method: 'POST',
       headers: jsonHeaders(),
@@ -208,8 +279,6 @@ export async function getCard(employeeNo) {
  * Fetch device capabilities — useful for debugging what the device supports
  */
 export async function getCapabilities() {
-  const res = await client.fetch(
-    `${BASE_URL}/ISAPI/AccessControl/capabilities`
-  );
+  const res = await requestIsapi('/ISAPI/AccessControl/capabilities');
   return await parseResponse(res);
 }

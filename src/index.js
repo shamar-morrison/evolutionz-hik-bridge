@@ -6,6 +6,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { processJob } from './jobs.js';
+import { createSerialJobQueue } from './job-queue.js';
 
 // ─── Supabase Setup ───────────────────────────────────────────────────────────
 
@@ -62,6 +63,8 @@ async function handleJob(job) {
   }
 }
 
+const enqueueJob = createSerialJobQueue(handleJob);
+
 // ─── Pick up any jobs that were pending before this service started ──────────
 
 async function processPendingJobs() {
@@ -79,7 +82,7 @@ async function processPendingJobs() {
   if (pendingJobs.length > 0) {
     console.log(`[bridge] Found ${pendingJobs.length} pending job(s) to process on startup`);
     for (const job of pendingJobs) {
-      await handleJob(job);
+      await enqueueJob(job);
     }
   } else {
     console.log('[bridge] No pending jobs — ready and listening');
@@ -102,7 +105,7 @@ function startRealtimeListener() {
       async (payload) => {
         const job = payload.new;
         console.log(`[bridge] New job received: type="${job.type}" id=${job.id}`);
-        await handleJob(job);
+        await enqueueJob(job);
       }
     )
     .subscribe((status) => {
