@@ -105,6 +105,54 @@ function buildUnlockDoorBody(remotePassword) {
   return `<?xml version="1.0" encoding="UTF-8"?><RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><cmd>open</cmd><remotePassword>${remotePassword}</remotePassword></RemoteControlDoor>`;
 }
 
+function toNumberIfNumeric(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed === '' || Number.isNaN(Number(trimmed))) {
+    return value;
+  }
+
+  return Number(trimmed);
+}
+
+function normalizeResponseStatus(parsedXml) {
+  const responseStatus = parsedXml?.ResponseStatus;
+
+  if (!responseStatus || typeof responseStatus !== 'object') {
+    return null;
+  }
+
+  const normalized = {
+    ok: true,
+    type: 'ResponseStatus',
+  };
+
+  const fields = [
+    'requestURL',
+    'statusCode',
+    'statusString',
+    'subStatusCode',
+    'errorCode',
+    'errorMsg',
+  ];
+
+  for (const field of fields) {
+    if (responseStatus[field] === undefined || responseStatus[field] === '') {
+      continue;
+    }
+
+    normalized[field] = field === 'statusCode' || field === 'errorCode'
+      ? toNumberIfNumeric(responseStatus[field])
+      : responseStatus[field];
+  }
+
+  return normalized;
+}
+
 async function parseResponse(res) {
   const text = await res.text();
   if (!res.ok) {
@@ -114,7 +162,8 @@ async function parseResponse(res) {
   try {
     return JSON.parse(text);
   } catch {
-    return await parseStringPromise(text, { explicitArray: false });
+    const parsedXml = await parseStringPromise(text, { explicitArray: false });
+    return normalizeResponseStatus(parsedXml) ?? parsedXml;
   }
 }
 

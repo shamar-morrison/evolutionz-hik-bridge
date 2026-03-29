@@ -191,6 +191,24 @@ function createUnlockDoorServer({ expectedRemotePassword = '123456', finalBare40
   };
 }
 
+function createXmlResponseServer(xmlBody, route = '/xml') {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/xml' });
+    res.end(xmlBody);
+  });
+
+  return {
+    async start() {
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return server.address().port;
+    },
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+    },
+    route,
+  };
+}
+
 async function loadHikModule(port, envOverrides = {}) {
   process.env.HIK_IP = '127.0.0.1';
   process.env.HIK_PORT = String(port);
@@ -326,6 +344,28 @@ test('unlockDoor sends the device-specific remotePassword payload', async () => 
   }
 });
 
+test('unlockDoor normalizes XML ResponseStatus success results', async () => {
+  const responseXml = '<?xml version="1.0" encoding="UTF-8"?><ResponseStatus version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><requestURL>/ISAPI/AccessControl/RemoteControl/door/1</requestURL><statusCode>1</statusCode><statusString>OK</statusString><subStatusCode>ok</subStatusCode></ResponseStatus>';
+  const device = createXmlResponseServer(responseXml, '/ISAPI/AccessControl/RemoteControl/door/1');
+  const port = await device.start();
+  const hik = await loadHikModule(port, { HIK_REMOTE_PASSWORD: '123456' });
+
+  try {
+    const result = await hik.unlockDoor();
+
+    assert.deepEqual(result, {
+      ok: true,
+      type: 'ResponseStatus',
+      requestURL: '/ISAPI/AccessControl/RemoteControl/door/1',
+      statusCode: 1,
+      statusString: 'OK',
+      subStatusCode: 'ok',
+    });
+  } finally {
+    await device.close();
+  }
+});
+
 test('unlockDoor error mentions the endpoint when the final 401 has no digest challenge', async () => {
   const device = createUnlockDoorServer({ finalBare401: true });
   const port = await device.start();
@@ -336,6 +376,29 @@ test('unlockDoor error mentions the endpoint when the final 401 has no digest ch
       () => hik.unlockDoor(),
       /Device returned 401 for \/ISAPI\/AccessControl\/RemoteControl\/door\/1 without a digest challenge/
     );
+  } finally {
+    await device.close();
+  }
+});
+
+test('getCapabilities keeps non-ResponseStatus XML payloads unchanged', async () => {
+  const responseXml = '<?xml version="1.0" encoding="UTF-8"?><AccessControl version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><isSupportRemoteControlDoor>true</isSupportRemoteControlDoor></AccessControl>';
+  const device = createXmlResponseServer(responseXml, '/ISAPI/AccessControl/capabilities');
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.getCapabilities();
+
+    assert.deepEqual(result, {
+      AccessControl: {
+        $: {
+          version: '2.0',
+          xmlns: 'http://www.isapi.org/ver20/XMLSchema',
+        },
+        isSupportRemoteControlDoor: 'true',
+      },
+    });
   } finally {
     await device.close();
   }
