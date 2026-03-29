@@ -9,7 +9,8 @@ const BASE_URL = `http://${process.env.HIK_IP}:${process.env.HIK_PORT}`;
 // DigestFetch handles the Digest Auth handshake automatically
 const client = new DigestFetch(
   process.env.HIK_USERNAME,
-  process.env.HIK_PASSWORD
+  process.env.HIK_PASSWORD,
+  { retry: true }
 );
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
