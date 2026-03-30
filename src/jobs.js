@@ -2,6 +2,63 @@
 // Processes access control jobs from the Supabase queue
 
 import * as hik from './hik.js';
+import { toBoolean } from './hik/shared.js';
+
+const WRITE_JOB_ROUTES = {
+  add_user: '/ISAPI/AccessControl/UserInfo/Modify?format=json',
+  add_card: '/ISAPI/AccessControl/CardInfo/Modify?format=json',
+};
+
+function shouldLogWritePayloadDiagnostics() {
+  return toBoolean(process.env.HIK_DEBUG_WRITE_PAYLOADS, false);
+}
+
+function normalizeLogString(value) {
+  return typeof value === 'string' ? value.trim() : null;
+}
+
+function buildWritePayloadSummary(payload) {
+  const name = normalizeLogString(payload?.name);
+
+  return {
+    employeeNo: normalizeLogString(payload?.employeeNo),
+    name,
+    nameLength: name ? name.length : null,
+    beginTime: normalizeLogString(payload?.beginTime),
+    endTime: normalizeLogString(payload?.endTime),
+    cardNo: normalizeLogString(payload?.cardNo),
+  };
+}
+
+function extractRawDeviceErrorBody(errorMessage) {
+  if (typeof errorMessage !== 'string' || !errorMessage.startsWith('Device returned ')) {
+    return errorMessage ?? null;
+  }
+
+  const separatorIndex = errorMessage.indexOf(': ');
+
+  if (separatorIndex < 0) {
+    return errorMessage;
+  }
+
+  return errorMessage.slice(separatorIndex + 2);
+}
+
+function logWriteFailureDiagnostics(jobType, payload, error) {
+  if (!shouldLogWritePayloadDiagnostics()) {
+    return;
+  }
+
+  const diagnostics = {
+    jobType,
+    route: WRITE_JOB_ROUTES[jobType] ?? null,
+    payloadSummary: buildWritePayloadSummary(payload),
+    rawDeviceErrorBody:
+      extractRawDeviceErrorBody(error instanceof Error ? error.message : String(error)),
+  };
+
+  console.error(`[hik] ${jobType} write failure diagnostics\n${JSON.stringify(diagnostics, null, 2)}`);
+}
 
 /**
  * Process a single job from the access_control_jobs table.
@@ -31,14 +88,19 @@ export async function processJob(job, hikApi = hik) {
     }
 
     case 'add_user': {
-      const result = await hikApi.addUser({
-        employeeNo: payload.employeeNo,
-        name: payload.name,
-        userType: payload.userType ?? 'normal',
-        beginTime: payload.beginTime,
-        endTime: payload.endTime,
-      });
-      return { success: true, result };
+      try {
+        const result = await hikApi.addUser({
+          employeeNo: payload.employeeNo,
+          name: payload.name,
+          userType: payload.userType ?? 'normal',
+          beginTime: payload.beginTime,
+          endTime: payload.endTime,
+        });
+        return { success: true, result };
+      } catch (error) {
+        logWriteFailureDiagnostics(type, payload, error);
+        throw error;
+      }
     }
 
     case 'delete_user': {
@@ -52,8 +114,13 @@ export async function processJob(job, hikApi = hik) {
     }
 
     case 'add_card': {
-      const result = await hikApi.addCard(payload.employeeNo, payload.cardNo);
-      return { success: true, result };
+      try {
+        const result = await hikApi.addCard(payload.employeeNo, payload.cardNo);
+        return { success: true, result };
+      } catch (error) {
+        logWriteFailureDiagnostics(type, payload, error);
+        throw error;
+      }
     }
 
     case 'revoke_card': {

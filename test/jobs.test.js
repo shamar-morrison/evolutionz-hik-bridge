@@ -94,3 +94,131 @@ test('processJob dispatches reset_slot jobs', async () => {
     result: { ok: true },
   });
 });
+
+test('processJob logs add_user write diagnostics when debug flag is enabled', async () => {
+  const hikApi = {
+    addUser: async () => {
+      throw new Error(
+        'Device returned 400 for PUT /ISAPI/AccessControl/UserInfo/Modify?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+      );
+    },
+  };
+  const originalFlag = process.env.HIK_DEBUG_WRITE_PAYLOADS;
+  const originalError = console.error;
+  const errorCalls = [];
+
+  process.env.HIK_DEBUG_WRITE_PAYLOADS = '1';
+  console.error = (...args) => {
+    errorCalls.push(args);
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        processJob(
+          {
+            id: 'job-add-user',
+            type: 'add_user',
+            payload: {
+              employeeNo: ' 00000611 ',
+              name: ' Jane Doe ',
+              beginTime: '2026-03-30T00:00:00',
+              endTime: '2026-07-15T23:59:59',
+            },
+          },
+          hikApi
+        ),
+      /UserInfo\/Modify\?format=json/
+    );
+  } finally {
+    console.error = originalError;
+
+    if (originalFlag === undefined) {
+      delete process.env.HIK_DEBUG_WRITE_PAYLOADS;
+    } else {
+      process.env.HIK_DEBUG_WRITE_PAYLOADS = originalFlag;
+    }
+  }
+
+  assert.equal(errorCalls.length, 1);
+  const [message] = errorCalls[0];
+  const diagnostics = JSON.parse(message.slice(message.indexOf('\n') + 1));
+
+  assert.match(message, /^\[hik\] add_user write failure diagnostics\n/);
+  assert.deepEqual(diagnostics, {
+    jobType: 'add_user',
+    route: '/ISAPI/AccessControl/UserInfo/Modify?format=json',
+    payloadSummary: {
+      employeeNo: '00000611',
+      name: 'Jane Doe',
+      nameLength: 8,
+      beginTime: '2026-03-30T00:00:00',
+      endTime: '2026-07-15T23:59:59',
+      cardNo: null,
+    },
+    rawDeviceErrorBody: '{"statusString":"Invalid Content","subStatusCode":"badParameters"}',
+  });
+});
+
+test('processJob logs add_card write diagnostics when debug flag is enabled', async () => {
+  const hikApi = {
+    addCard: async () => {
+      throw new Error(
+        'Device returned 400 for PUT /ISAPI/AccessControl/CardInfo/Modify?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+      );
+    },
+  };
+  const originalFlag = process.env.HIK_DEBUG_WRITE_PAYLOADS;
+  const originalError = console.error;
+  const errorCalls = [];
+
+  process.env.HIK_DEBUG_WRITE_PAYLOADS = '1';
+  console.error = (...args) => {
+    errorCalls.push(args);
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        processJob(
+          {
+            id: 'job-add-card',
+            type: 'add_card',
+            payload: {
+              employeeNo: ' 00000611 ',
+              cardNo: ' 0102857149 ',
+            },
+          },
+          hikApi
+        ),
+      /CardInfo\/Modify\?format=json/
+    );
+  } finally {
+    console.error = originalError;
+
+    if (originalFlag === undefined) {
+      delete process.env.HIK_DEBUG_WRITE_PAYLOADS;
+    } else {
+      process.env.HIK_DEBUG_WRITE_PAYLOADS = originalFlag;
+    }
+  }
+
+  assert.equal(errorCalls.length, 1);
+  const [message] = errorCalls[0];
+  const diagnostics = JSON.parse(message.slice(message.indexOf('\n') + 1));
+
+  assert.match(message, /^\[hik\] add_card write failure diagnostics\n/);
+  assert.deepEqual(diagnostics, {
+    jobType: 'add_card',
+    route: '/ISAPI/AccessControl/CardInfo/Modify?format=json',
+    payloadSummary: {
+      employeeNo: '00000611',
+      name: null,
+      nameLength: null,
+      beginTime: null,
+      endTime: null,
+      cardNo: '0102857149',
+    },
+    rawDeviceErrorBody: '{"statusString":"Invalid Content","subStatusCode":"badParameters"}',
+  });
+});
