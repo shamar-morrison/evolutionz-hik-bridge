@@ -11,6 +11,16 @@ const REMOTE_CONTROL_PASSWORD_PATTERN = /^\d{6}$/;
 const SEARCH_PAGE_SIZE = 30;
 const DEFAULT_PLACEHOLDER_SLOT_PATTERN = '^[A-Z]\\d{2}$';
 const DEFAULT_RESET_SLOT_END_TIME = '2037-12-31T23:59:59';
+const AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT = 10;
+const VALIDITY_DROP_REASONS = [
+  'missingValid',
+  'disabled',
+  'invalidBeginTime',
+  'futureBeginTime',
+  'missingEndTime',
+  'invalidEndTime',
+  'expiredEndTime',
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -190,38 +200,144 @@ function getResetSlotEndTime() {
   return process.env.HIK_RESET_SLOT_END_TIME?.trim() || DEFAULT_RESET_SLOT_END_TIME;
 }
 
-function isCurrentlyValid(userInfo, now = new Date()) {
+function isAvailableSlotsDebugEnabled() {
+  return process.env.HIK_DEBUG_AVAILABLE_SLOTS === '1';
+}
+
+function createInvalidValidityDiagnostics() {
+  return {
+    total: 0,
+    missingValid: 0,
+    disabled: 0,
+    invalidBeginTime: 0,
+    futureBeginTime: 0,
+    missingEndTime: 0,
+    invalidEndTime: 0,
+    expiredEndTime: 0,
+  };
+}
+
+function analyzeUserValidity(userInfo, now = new Date()) {
   const valid = userInfo?.Valid;
+  const hasValidObject = !!valid && typeof valid === 'object';
+  const beginTime =
+    hasValidObject && typeof valid.beginTime === 'string' ? valid.beginTime.trim() : '';
+  const endTime =
+    hasValidObject && typeof valid.endTime === 'string' ? valid.endTime.trim() : '';
+  const beginTimestamp = beginTime ? Date.parse(beginTime) : null;
+  const endTimestamp = endTime ? Date.parse(endTime) : null;
+  const normalizedValidity = {
+    hasValidObject,
+    enableRaw: hasValidObject ? valid.enable ?? null : null,
+    enable: hasValidObject ? toBoolean(valid.enable, false) : false,
+    beginTime,
+    beginTimestamp: Number.isNaN(beginTimestamp) ? null : beginTimestamp,
+    endTime,
+    endTimestamp: Number.isNaN(endTimestamp) ? null : endTimestamp,
+    nowTimestamp: now.getTime(),
+  };
 
-  if (!valid || typeof valid !== 'object') {
-    return false;
+  if (!hasValidObject) {
+    return {
+      isValid: false,
+      reason: 'missingValid',
+      rawValid: valid ?? null,
+      normalizedValidity,
+    };
   }
 
-  if (!toBoolean(valid.enable, false)) {
-    return false;
+  if (!normalizedValidity.enable) {
+    return {
+      isValid: false,
+      reason: 'disabled',
+      rawValid: valid,
+      normalizedValidity,
+    };
   }
-
-  const beginTime = typeof valid.beginTime === 'string' ? valid.beginTime.trim() : '';
-  const endTime = typeof valid.endTime === 'string' ? valid.endTime.trim() : '';
 
   if (beginTime) {
-    const beginTimestamp = Date.parse(beginTime);
+    if (normalizedValidity.beginTimestamp === null) {
+      return {
+        isValid: false,
+        reason: 'invalidBeginTime',
+        rawValid: valid,
+        normalizedValidity,
+      };
+    }
 
-    if (Number.isNaN(beginTimestamp) || beginTimestamp > now.getTime()) {
-      return false;
+    if (normalizedValidity.beginTimestamp > normalizedValidity.nowTimestamp) {
+      return {
+        isValid: false,
+        reason: 'futureBeginTime',
+        rawValid: valid,
+        normalizedValidity,
+      };
     }
   }
 
   if (!endTime) {
-    return false;
+    return {
+      isValid: false,
+      reason: 'missingEndTime',
+      rawValid: valid,
+      normalizedValidity,
+    };
   }
 
-  const endTimestamp = Date.parse(endTime);
-  if (Number.isNaN(endTimestamp)) {
-    return false;
+  if (normalizedValidity.endTimestamp === null) {
+    return {
+      isValid: false,
+      reason: 'invalidEndTime',
+      rawValid: valid,
+      normalizedValidity,
+    };
   }
 
-  return endTimestamp >= now.getTime();
+  if (normalizedValidity.endTimestamp < normalizedValidity.nowTimestamp) {
+    return {
+      isValid: false,
+      reason: 'expiredEndTime',
+      rawValid: valid,
+      normalizedValidity,
+    };
+  }
+
+  return {
+    isValid: true,
+    reason: null,
+    rawValid: valid,
+    normalizedValidity,
+  };
+}
+
+function recordInvalidValidity(invalidValidityDiagnostics, reason) {
+  invalidValidityDiagnostics.total += 1;
+
+  if (VALIDITY_DROP_REASONS.includes(reason)) {
+    invalidValidityDiagnostics[reason] += 1;
+  }
+}
+
+function addDroppedPlaceholderSample({
+  droppedPlaceholderSamples,
+  employeeNo,
+  placeholderName,
+  reason,
+  rawValid,
+  normalizedValidity,
+}) {
+  if (droppedPlaceholderSamples.samples.length >= AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT) {
+    droppedPlaceholderSamples.omittedCount += 1;
+    return;
+  }
+
+  droppedPlaceholderSamples.samples.push({
+    reason,
+    employeeNo,
+    name: placeholderName,
+    rawValid,
+    normalizedValidity,
+  });
 }
 
 function canonicalizeEmployeeNo(value) {
@@ -561,10 +677,15 @@ export async function listAvailableCards({ maxResults = SEARCH_PAGE_SIZE } = {})
 
 export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = new Date() } = {}) {
   const placeholderPattern = getPlaceholderSlotPattern();
+  const availableSlotsDebugEnabled = isAvailableSlotsDebugEnabled();
   const userSearchID = `evolutionz-users-${Date.now()}`;
   const cardSearchID = `evolutionz-cards-${Date.now()}`;
   const placeholderUsers = new Map();
   const cardsByEmployeeNo = new Map();
+  const droppedPlaceholderSamples = {
+    samples: [],
+    omittedCount: 0,
+  };
   const diagnostics = {
     userPages: 0,
     cardPages: 0,
@@ -576,7 +697,7 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       missingEmployeeNo: 0,
       missingPlaceholderName: 0,
       nonPlaceholderName: 0,
-      invalidValidity: 0,
+      invalidValidity: createInvalidValidityDiagnostics(),
     },
     droppedCards: {
       missingEmployeeNo: 0,
@@ -626,8 +747,22 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
         continue;
       }
 
-      if (!isCurrentlyValid(userInfo, now)) {
-        diagnostics.droppedUsers.invalidValidity += 1;
+      const validity = analyzeUserValidity(userInfo, now);
+
+      if (!validity.isValid) {
+        recordInvalidValidity(diagnostics.droppedUsers.invalidValidity, validity.reason);
+
+        if (availableSlotsDebugEnabled) {
+          addDroppedPlaceholderSample({
+            droppedPlaceholderSamples,
+            employeeNo,
+            placeholderName,
+            reason: validity.reason,
+            rawValid: validity.rawValid,
+            normalizedValidity: validity.normalizedValidity,
+          });
+        }
+
         continue;
       }
 
@@ -749,6 +884,15 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
   diagnostics.matchedJoinedSlots = slots.length;
 
   console.info('[hik] listAvailableSlots diagnostics', diagnostics);
+
+  if (availableSlotsDebugEnabled) {
+    console.info('[hik] listAvailableSlots dropped placeholder samples', {
+      sampleLimit: AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT,
+      sampledCount: droppedPlaceholderSamples.samples.length,
+      omittedCount: droppedPlaceholderSamples.omittedCount,
+      samples: droppedPlaceholderSamples.samples,
+    });
+  }
 
   return {
     slots,
