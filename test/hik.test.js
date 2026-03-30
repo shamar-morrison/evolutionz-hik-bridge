@@ -2491,7 +2491,7 @@ test('listAvailableSlots focused comparison report marks focused cards missing f
   }
 });
 
-test('listAvailableSlots marks unsupported CardNoList probes as unsupported instead of clean misses', async () => {
+test('listAvailableSlots marks unsupported CardNoList probes as inconclusive instead of clean misses', async () => {
   const device = createAuthorizedApiServer(({ req, res, body }) => {
     if (req.url === '/ISAPI/AccessControl/capabilities') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2620,7 +2620,7 @@ test('listAvailableSlots marks unsupported CardNoList probes as unsupported inst
         key: '0105451261 • P55',
         cardNo: '0105451261',
         slotTokens: ['P55'],
-        classification: 'bulkMissWithUnsupportedCardProbe',
+        classification: 'inconclusive',
         bulkCardFound: false,
         bulkFocusedUserSeen: false,
         directCardProbeStatus: 'unsupported',
@@ -2653,6 +2653,184 @@ test('listAvailableSlots marks unsupported CardNoList probes as unsupported inst
             returnedEmployeeNos: [],
             returnedNames: [],
             error: null,
+          },
+        ],
+      },
+    ]);
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots marks unsupported fuzzy user probes as inconclusive instead of clean misses', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    if (req.url === '/ISAPI/AccessControl/capabilities') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        AccessControlCapabilities: {
+          userLimit: 900,
+          cardLimit: 870,
+        },
+      }));
+      return;
+    }
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Count?format=json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        UserInfoCount: {
+          userNumber: 581,
+        },
+      }));
+      return;
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Count?format=json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        CardInfoCount: {
+          cardNumber: 569,
+        },
+      }));
+      return;
+    }
+
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const fuzzySearch = payload.UserInfoSearchCond.fuzzySearch ?? '';
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      if (fuzzySearch) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          statusCode: 6,
+          statusString: 'Invalid Content',
+          subStatusCode: 'badParameters',
+          errorCode: 1610612737,
+          errorMsg: '0x60000001',
+        }));
+        return;
+      }
+
+      if (position === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 0,
+            totalMatches: 0,
+            UserInfo: [],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+      const requestedCardNos = (payload.CardInfoSearchCond.CardNoList ?? []).map(
+        (entry) => entry.cardNo
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (requestedCardNos.length > 0 || position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: requestedCardNos.length > 0 ? 'NO MATCH' : 'OK',
+            numOfMatches: 0,
+            totalMatches: 0,
+            CardInfo: [],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P55',
+    HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS: '0105451261',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    const directUserFuzzyReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused direct user fuzzy probes'
+    );
+    const comparisonReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused comparison report'
+    );
+
+    assert.deepEqual(
+      directUserFuzzyReport.probes.map((probe) => probe.status),
+      ['unsupported', 'unsupported']
+    );
+    assert.match(directUserFuzzyReport.probes[0].error, /badParameters/);
+    assert.match(directUserFuzzyReport.probes[1].error, /badParameters/);
+    assert.deepEqual([
+      {
+        ...comparisonReport.records[0],
+        directUserFuzzyProbes: comparisonReport.records[0].directUserFuzzyProbes.map((probe) => ({
+          ...probe,
+          error: probe.error ? 'DIRECT_USER_FUZZY_PROBE_ERROR' : probe.error,
+        })),
+      },
+    ], [
+      {
+        key: '0105451261 • P55',
+        cardNo: '0105451261',
+        slotTokens: ['P55'],
+        classification: 'inconclusive',
+        bulkCardFound: false,
+        bulkFocusedUserSeen: false,
+        directCardProbeStatus: 'noMatch',
+        directCardProbeError: null,
+        directUserFuzzyHit: false,
+        bulkEmployeeNo: null,
+        directEmployeeNos: [],
+        bulkUserName: null,
+        directUserNames: [],
+        bulkSlotToken: null,
+        directSlotTokens: [],
+        bulkCard: null,
+        bulkUser: null,
+        bulkFocusedUsers: [],
+        directCards: [],
+        directUsers: [],
+        directUserFuzzyProbes: [
+          {
+            query: '0105451261',
+            purpose: 'focusedCardNo',
+            status: 'unsupported',
+            returnedEmployeeNos: [],
+            returnedNames: [],
+            error: 'DIRECT_USER_FUZZY_PROBE_ERROR',
+          },
+          {
+            query: 'P55',
+            purpose: 'focusedPlaceholderName',
+            status: 'unsupported',
+            returnedEmployeeNos: [],
+            returnedNames: [],
+            error: 'DIRECT_USER_FUZZY_PROBE_ERROR',
           },
         ],
       },

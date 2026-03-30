@@ -47,7 +47,7 @@ function summarizeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isUnsupportedCardProbeError(errorMessage) {
+function isUnsupportedFocusedProbeError(errorMessage) {
   if (typeof errorMessage !== 'string') {
     return false;
   }
@@ -218,8 +218,12 @@ async function probeFocusedUsersByEmployeeNo({
       directUserProbeRecord.status =
         directUserProbeRecord.userRecords.length > 0 ? 'found' : 'noMatch';
     } catch (error) {
-      directUserProbeRecord.status = 'error';
       directUserProbeRecord.error = summarizeError(error);
+      directUserProbeRecord.status = isUnsupportedFocusedProbeError(
+        directUserProbeRecord.error
+      )
+        ? 'unsupported'
+        : 'error';
     }
 
     userProbes.push(directUserProbeRecord);
@@ -299,8 +303,10 @@ async function probeFocusedUserByFuzzySearch({
     );
     probeRecord.status = probeRecord.userRecords.length > 0 ? 'found' : 'noMatch';
   } catch (error) {
-    probeRecord.status = 'error';
     probeRecord.error = summarizeError(error);
+    probeRecord.status = isUnsupportedFocusedProbeError(probeRecord.error)
+      ? 'unsupported'
+      : 'error';
   }
 
   return probeRecord;
@@ -385,7 +391,7 @@ async function probeFocusedCard({
     });
   } catch (error) {
     probeRecord.error = summarizeError(error);
-    probeRecord.directCardProbeStatus = isUnsupportedCardProbeError(probeRecord.error)
+    probeRecord.directCardProbeStatus = isUnsupportedFocusedProbeError(probeRecord.error)
       ? 'unsupported'
       : 'error';
   }
@@ -420,6 +426,8 @@ function buildFocusedComparisonClassification({
   bulkHasFocusedEvidence,
   directCardProbeStatus,
   directUserFuzzyHit,
+  directUserFuzzyProbeUnsupported,
+  directUserFuzzyProbeError,
 }) {
   if (bulkHasFocusedEvidence && (directCardProbeStatus === 'found' || directUserFuzzyHit)) {
     return 'foundInBulkAndDirect';
@@ -437,11 +445,14 @@ function buildFocusedComparisonClassification({
     return 'foundBulkOnly';
   }
 
-  if (directCardProbeStatus === 'unsupported') {
-    return 'bulkMissWithUnsupportedCardProbe';
+  if (
+    directCardProbeStatus === 'unsupported' ||
+    directUserFuzzyProbeUnsupported
+  ) {
+    return 'inconclusive';
   }
 
-  if (directCardProbeStatus === 'error') {
+  if (directCardProbeStatus === 'error' || directUserFuzzyProbeError) {
     return 'bulkMissWithProbeError';
   }
 
@@ -971,10 +982,18 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       const bulkHasFocusedEvidence =
         !!bulkCardRecord || focusedBulkUserRecords.length > 0;
       const directUserFuzzyHit = relevantFuzzyProbes.some((userProbe) => userProbe.status === 'found');
+      const directUserFuzzyProbeUnsupported = relevantFuzzyProbes.some(
+        (userProbe) => userProbe.status === 'unsupported'
+      );
+      const directUserFuzzyProbeError = relevantFuzzyProbes.some(
+        (userProbe) => userProbe.status === 'error'
+      );
       const classification = buildFocusedComparisonClassification({
         bulkHasFocusedEvidence,
         directCardProbeStatus: probeRecord.directCardProbeStatus,
         directUserFuzzyHit,
+        directUserFuzzyProbeUnsupported,
+        directUserFuzzyProbeError,
       });
 
       focusedComparisonRecords.push({
