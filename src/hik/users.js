@@ -1,24 +1,54 @@
 import { SEARCH_PAGE_SIZE } from './constants.js';
 import { performIsapiRequest, jsonHeaders } from './client.js';
+import { getUserModifyMode } from './config.js';
 import { normalizeList } from './shared.js';
+
+export function buildUserInfoPayload({
+  employeeNo,
+  name,
+  userType = 'normal',
+  beginTime,
+  endTime,
+  mode = getUserModifyMode(),
+}) {
+  const payload = {
+    employeeNo: String(employeeNo),
+    name,
+    userType,
+  };
+
+  if (mode === 'minimal') {
+    return payload;
+  }
+
+  payload.Valid = {
+    enable: true,
+    beginTime,
+    endTime,
+  };
+
+  if (mode === 'valid_only') {
+    return payload;
+  }
+
+  payload.doorRight = '1';
+  payload.RightPlan = [{ doorNo: 1, planTemplateNo: '1' }];
+
+  return payload;
+}
 
 export async function addUser({ employeeNo, name, userType = 'normal', beginTime, endTime }) {
   return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/Modify?format=json', {
     method: 'PUT',
     headers: jsonHeaders(),
     body: JSON.stringify({
-      UserInfo: {
-        employeeNo: String(employeeNo),
+      UserInfo: buildUserInfoPayload({
+        employeeNo,
         name,
         userType,
-        Valid: {
-          enable: true,
-          beginTime,
-          endTime,
-        },
-        doorRight: '1',
-        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
-      },
+        beginTime,
+        endTime,
+      }),
     }),
   });
 }

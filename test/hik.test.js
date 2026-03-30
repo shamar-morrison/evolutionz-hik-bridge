@@ -284,6 +284,7 @@ async function loadHikModule(port, envOverrides = {}) {
   process.env.HIK_DEBUG_AVAILABLE_SLOTS = '0';
   process.env.HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES = '';
   process.env.HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS = '';
+  process.env.HIK_USER_MODIFY_MODE = 'full_access';
   process.env.HIK_REMOTE_PASSWORD = '123456';
 
   for (const [key, value] of Object.entries(envOverrides)) {
@@ -521,6 +522,79 @@ test('addUser uses PUT UserInfo/Modify with the expected payload', async () => {
         },
         doorRight: '1',
         RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('addUser supports the valid_only user-modify payload mode', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, { HIK_USER_MODIFY_MODE: 'valid_only' });
+
+  try {
+    const result = await hik.addUser({
+      employeeNo: 'EVZ-20260330141516-ABC123',
+      name: 'Jane Doe',
+      beginTime: '2026-03-30T00:00:00',
+      endTime: '2026-07-15T23:59:59',
+    });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.deepEqual(payload, {
+      UserInfo: {
+        employeeNo: 'EVZ-20260330141516-ABC123',
+        name: 'Jane Doe',
+        userType: 'normal',
+        Valid: {
+          enable: true,
+          beginTime: '2026-03-30T00:00:00',
+          endTime: '2026-07-15T23:59:59',
+        },
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('addUser supports the minimal user-modify payload mode', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, { HIK_USER_MODIFY_MODE: 'minimal' });
+
+  try {
+    const result = await hik.addUser({
+      employeeNo: 'EVZ-20260330141516-ABC123',
+      name: 'Jane Doe',
+      beginTime: '2026-03-30T00:00:00',
+      endTime: '2026-07-15T23:59:59',
+    });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.deepEqual(payload, {
+      UserInfo: {
+        employeeNo: 'EVZ-20260330141516-ABC123',
+        name: 'Jane Doe',
+        userType: 'normal',
       },
     });
   } finally {
@@ -3534,6 +3608,44 @@ test('resetSlot restores the placeholder name with the configured far-future exp
         },
         doorRight: '1',
         RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('resetSlot honors the configured valid_only user-modify payload mode', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, { HIK_USER_MODIFY_MODE: 'valid_only' });
+
+  try {
+    const result = await hik.resetSlot({
+      employeeNo: '00000611',
+      placeholderName: 'P42',
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.deepEqual(payload, {
+      UserInfo: {
+        employeeNo: '00000611',
+        name: 'P42',
+        userType: 'normal',
+        Valid: {
+          enable: true,
+          beginTime: '2026-03-30T00:00:00',
+          endTime: '2037-12-31T23:59:59',
+        },
       },
     });
   } finally {

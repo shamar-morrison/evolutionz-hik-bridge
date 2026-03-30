@@ -104,10 +104,12 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
     },
   };
   const originalFlag = process.env.HIK_DEBUG_WRITE_PAYLOADS;
+  const originalMode = process.env.HIK_USER_MODIFY_MODE;
   const originalError = console.error;
   const errorCalls = [];
 
   process.env.HIK_DEBUG_WRITE_PAYLOADS = '1';
+  process.env.HIK_USER_MODIFY_MODE = 'full_access';
   console.error = (...args) => {
     errorCalls.push(args);
   };
@@ -138,6 +140,12 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
     } else {
       process.env.HIK_DEBUG_WRITE_PAYLOADS = originalFlag;
     }
+
+    if (originalMode === undefined) {
+      delete process.env.HIK_USER_MODIFY_MODE;
+    } else {
+      process.env.HIK_USER_MODIFY_MODE = originalMode;
+    }
   }
 
   assert.equal(errorCalls.length, 1);
@@ -155,6 +163,10 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
       beginTime: '2026-03-30T00:00:00',
       endTime: '2026-07-15T23:59:59',
       cardNo: null,
+      payloadMode: 'full_access',
+      userType: 'normal',
+      doorRight: '1',
+      RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
     },
     rawDeviceErrorBody: '{"statusString":"Invalid Content","subStatusCode":"badParameters"}',
   });
@@ -218,6 +230,10 @@ test('processJob logs add_card write diagnostics when debug flag is enabled', as
       beginTime: null,
       endTime: null,
       cardNo: '0102857149',
+      payloadMode: null,
+      userType: null,
+      doorRight: null,
+      RightPlan: null,
     },
     rawDeviceErrorBody: '{"statusString":"Invalid Content","subStatusCode":"badParameters"}',
   });

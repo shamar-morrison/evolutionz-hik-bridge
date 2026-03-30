@@ -2,7 +2,9 @@
 // Processes access control jobs from the Supabase queue
 
 import * as hik from './hik.js';
+import { buildUserInfoPayload } from './hik/users.js';
 import { toBoolean } from './hik/shared.js';
+import { getUserModifyMode } from './hik/config.js';
 
 const WRITE_JOB_ROUTES = {
   add_user: '/ISAPI/AccessControl/UserInfo/Modify?format=json',
@@ -17,8 +19,19 @@ function normalizeLogString(value) {
   return typeof value === 'string' ? value.trim() : null;
 }
 
-function buildWritePayloadSummary(payload) {
+function buildWritePayloadSummary(jobType, payload) {
   const name = normalizeLogString(payload?.name);
+  const userInfoPayload =
+    jobType === 'add_user'
+      ? buildUserInfoPayload({
+          employeeNo: payload?.employeeNo,
+          name: payload?.name,
+          userType: payload?.userType ?? 'normal',
+          beginTime: payload?.beginTime,
+          endTime: payload?.endTime,
+          mode: getUserModifyMode(),
+        })
+      : null;
 
   return {
     employeeNo: normalizeLogString(payload?.employeeNo),
@@ -27,6 +40,11 @@ function buildWritePayloadSummary(payload) {
     beginTime: normalizeLogString(payload?.beginTime),
     endTime: normalizeLogString(payload?.endTime),
     cardNo: normalizeLogString(payload?.cardNo),
+    payloadMode: userInfoPayload ? getUserModifyMode() : null,
+    userType: typeof userInfoPayload?.userType === 'string' ? userInfoPayload.userType : null,
+    doorRight:
+      typeof userInfoPayload?.doorRight === 'string' ? userInfoPayload.doorRight : null,
+    RightPlan: Array.isArray(userInfoPayload?.RightPlan) ? userInfoPayload.RightPlan : null,
   };
 }
 
@@ -52,7 +70,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
   const diagnostics = {
     jobType,
     route: WRITE_JOB_ROUTES[jobType] ?? null,
-    payloadSummary: buildWritePayloadSummary(payload),
+    payloadSummary: buildWritePayloadSummary(jobType, payload),
     rawDeviceErrorBody:
       extractRawDeviceErrorBody(error instanceof Error ? error.message : String(error)),
   };

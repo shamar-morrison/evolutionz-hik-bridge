@@ -44,6 +44,7 @@ HIK_PORT=80
 HIK_USERNAME=Admin
 HIK_PASSWORD=your_device_password
 HIK_REMOTE_PASSWORD=123456
+HIK_USER_MODIFY_MODE=full_access
 HIK_DEBUG_AVAILABLE_SLOTS=0
 HIK_DEBUG_WRITE_PAYLOADS=0
 HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=
@@ -55,6 +56,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
 `HIK_REMOTE_PASSWORD` must match the 6-digit remote door password configured on the device in iVMS-4200 / access control settings. The bridge needs that extra credential specifically for `unlock_door`.
+`HIK_USER_MODIFY_MODE` controls which fields the bridge sends to `UserInfo/Modify`. Use `full_access` for the original payload, `valid_only` to drop `doorRight` and `RightPlan`, or `minimal` to send only `employeeNo`, `name`, and `userType`. For the current gym laptop, set this to `valid_only` first.
 Set `HIK_DEBUG_AVAILABLE_SLOTS=1` temporarily when you need extra `list_available_slots` diagnostics in the laptop logs. That debug mode keeps the job result shape unchanged, but logs bounded pretty-JSON reports for scanned users, scanned cards, and card-backed non-slots.
 Set `HIK_DEBUG_WRITE_PAYLOADS=1` temporarily when you need write-failure diagnostics for `add_user` or `add_card`. The bridge logs the write route, a sanitized payload summary, and the raw device error body without changing the actual Hik request shape.
 Use `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS` when you need to force specific slot labels or card numbers into the debug output, for example `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=P55` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=0105451261`.

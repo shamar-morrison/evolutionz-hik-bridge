@@ -1,6 +1,7 @@
 import {
   DEFAULT_PLACEHOLDER_SLOT_PATTERN,
   DEFAULT_RESET_SLOT_END_TIME,
+  DEFAULT_USER_MODIFY_MODE,
 } from './constants.js';
 
 export function getPlaceholderSlotPattern() {
@@ -31,6 +32,25 @@ export function matchesPlaceholderPattern(placeholderPattern, value) {
 
 export function getResetSlotEndTime() {
   return process.env.HIK_RESET_SLOT_END_TIME?.trim() || DEFAULT_RESET_SLOT_END_TIME;
+}
+
+export function getUserModifyMode() {
+  const configuredMode = process.env.HIK_USER_MODIFY_MODE?.trim();
+  const supportedModes = new Set(['full_access', 'valid_only', 'minimal']);
+
+  if (!configuredMode) {
+    return DEFAULT_USER_MODIFY_MODE;
+  }
+
+  if (supportedModes.has(configuredMode)) {
+    return configuredMode;
+  }
+
+  console.warn(
+    `[hik] Invalid HIK_USER_MODIFY_MODE="${configuredMode}". Falling back to ${DEFAULT_USER_MODIFY_MODE}.`
+  );
+
+  return DEFAULT_USER_MODIFY_MODE;
 }
 
 export function isAvailableSlotsDebugEnabled() {
