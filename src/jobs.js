@@ -15,20 +15,21 @@ import * as hik from './hik.js';
  *   add_card      - payload: { employeeNo, cardNo }
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { employeeNo }
+ *   list_available_cards - payload: {}
  */
-export async function processJob(job) {
+export async function processJob(job, hikApi = hik) {
   const { type, payload } = job;
 
   console.log(`[jobs] Processing job type="${type}" id=${job.id}`);
 
   switch (type) {
     case 'unlock_door': {
-      const result = await hik.unlockDoor(payload.doorNo ?? 1);
+      const result = await hikApi.unlockDoor(payload.doorNo ?? 1);
       return { success: true, result };
     }
 
     case 'add_user': {
-      const result = await hik.addUser({
+      const result = await hikApi.addUser({
         employeeNo: payload.employeeNo,
         name: payload.name,
         userType: payload.userType ?? 'normal',
@@ -39,28 +40,32 @@ export async function processJob(job) {
     }
 
     case 'delete_user': {
-      const result = await hik.deleteUser(payload.employeeNo);
+      const result = await hikApi.deleteUser(payload.employeeNo);
       return { success: true, result };
     }
 
     case 'get_user': {
-      const result = await hik.getUser(payload.employeeNo);
+      const result = await hikApi.getUser(payload.employeeNo);
       return { success: true, result };
     }
 
     case 'add_card': {
-      // First make sure the user exists on the device, then issue the card
-      const result = await hik.addCard(payload.employeeNo, payload.cardNo);
+      const result = await hikApi.addCard(payload.employeeNo, payload.cardNo);
       return { success: true, result };
     }
 
     case 'revoke_card': {
-      const result = await hik.revokeCard(payload.employeeNo, payload.cardNo);
+      const result = await hikApi.revokeCard(payload.employeeNo, payload.cardNo);
       return { success: true, result };
     }
 
     case 'get_card': {
-      const result = await hik.getCard(payload.employeeNo);
+      const result = await hikApi.getCard(payload.employeeNo);
+      return { success: true, result };
+    }
+
+    case 'list_available_cards': {
+      const result = await hikApi.listAvailableCards();
       return { success: true, result };
     }
 

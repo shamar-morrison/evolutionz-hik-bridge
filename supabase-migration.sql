@@ -12,6 +12,7 @@ create table if not exists public.access_control_jobs (
   --   'add_card'     - payload: { employeeNo, cardNo }
   --   'revoke_card'  - payload: { employeeNo, cardNo }
   --   'get_card'     - payload: { employeeNo }
+  --   'list_available_cards' - payload: {}
 
   payload     jsonb       not null default '{}',
   status      text        not null default 'pending',

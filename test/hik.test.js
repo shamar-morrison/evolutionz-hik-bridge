@@ -209,6 +209,72 @@ function createXmlResponseServer(xmlBody, route = '/xml') {
   };
 }
 
+function createAuthorizedApiServer(handler) {
+  const events = [];
+  const seenKeys = new Set();
+
+  const server = http.createServer(async (req, res) => {
+    const auth = req.headers.authorization;
+
+    if (!auth) {
+      events.push({ type: 'challenge', route: req.url });
+      res.writeHead(401, {
+        'WWW-Authenticate': `Digest realm="${DIGEST_REALM}", nonce="${DIGEST_NONCE}", qop="auth", opaque="xyz"`,
+      });
+      res.end('challenge');
+      return;
+    }
+
+    const digest = parseDigestHeader(auth);
+    const key = `${digest.nonce}:${digest.cnonce}:${digest.nc}`;
+    const ha1 = md5(`${DIGEST_USER}:${DIGEST_REALM}:${DIGEST_PASSWORD}`);
+    const ha2 = md5(`${req.method}:${digest.uri}`);
+    const expected = md5(
+      `${ha1}:${digest.nonce}:${digest.nc}:${digest.cnonce}:${digest.qop}:${ha2}`
+    );
+    const invalid =
+      digest.username !== DIGEST_USER ||
+      digest.realm !== DIGEST_REALM ||
+      digest.nonce !== DIGEST_NONCE ||
+      digest.qop !== 'auth' ||
+      digest.response !== expected ||
+      seenKeys.has(key);
+
+    if (invalid) {
+      events.push({ type: 'reject', key, route: req.url });
+      res.writeHead(401, {
+        'WWW-Authenticate': `Digest realm="${DIGEST_REALM}", nonce="${DIGEST_NONCE}", qop="auth", opaque="xyz", stale=true`,
+      });
+      res.end(`rejected ${key}`);
+      return;
+    }
+
+    seenKeys.add(key);
+
+    const body = await readRequestBody(req);
+    events.push({
+      type: 'authorized',
+      key,
+      route: req.url,
+      method: req.method,
+      body,
+    });
+
+    await handler({ req, res, body, events });
+  });
+
+  return {
+    events,
+    async start() {
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      return server.address().port;
+    },
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
 async function loadHikModule(port, envOverrides = {}) {
   process.env.HIK_IP = '127.0.0.1';
   process.env.HIK_PORT = String(port);
@@ -304,7 +370,7 @@ test('HiK wrapper stops after one outer retry when final 401s continue', async (
   try {
     await assert.rejects(
       () => hik.getCapabilities(),
-      /Device returned 401 for \/ISAPI\/AccessControl\/capabilities: forced stale/
+      /Device returned 401 for GET \/ISAPI\/AccessControl\/capabilities: forced stale/
     );
 
     assert.equal(device.events.filter((event) => event.type === 'challenge').length, 2);
@@ -374,7 +440,177 @@ test('unlockDoor error mentions the endpoint when the final 401 has no digest ch
   try {
     await assert.rejects(
       () => hik.unlockDoor(),
-      /Device returned 401 for \/ISAPI\/AccessControl\/RemoteControl\/door\/1 without a digest challenge/
+      /Device returned 401 for PUT \/ISAPI\/AccessControl\/RemoteControl\/door\/1 without a digest challenge/
+    );
+  } finally {
+    await device.close();
+  }
+});
+
+test('addUser uses PUT UserInfo/SetUp with the expected payload', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.addUser({
+      employeeNo: 'EVZ-20260330141516-ABC123',
+      name: 'Jane Doe',
+      beginTime: '2026-03-30T00:00:00',
+      endTime: '2026-07-15T23:59:59',
+    });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
+    assert.deepEqual(payload, {
+      UserInfo: {
+        employeeNo: 'EVZ-20260330141516-ABC123',
+        name: 'Jane Doe',
+        userType: 'normal',
+        Valid: {
+          enable: true,
+          beginTime: '2026-03-30T00:00:00',
+          endTime: '2026-07-15T23:59:59',
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('addCard uses PUT CardInfo/Modify to assign an existing card', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.addCard('EVZ-20260330141516-ABC123', 'EF-009999');
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/CardInfo/Modify?format=json');
+    assert.deepEqual(payload, {
+      CardInfo: {
+        employeeNo: 'EVZ-20260330141516-ABC123',
+        cardNo: 'EF-009999',
+        cardType: 'normalCard',
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('listAvailableCards paginates card search and returns only unassigned cards', async () => {
+  const device = createAuthorizedApiServer(({ res, body }) => {
+    const payload = JSON.parse(body);
+    const position = payload.CardInfoSearchCond.searchResultPosition;
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+
+    if (position === 0) {
+      res.end(JSON.stringify({
+        CardInfoSearch: {
+          responseStatusStrg: 'MORE',
+          numOfMatches: 2,
+          totalMatches: 4,
+          CardInfo: [
+            { cardNo: 'EF-0002', employeeNo: '' },
+            { cardNo: 'EF-0001', employeeNo: 'EMP-1' },
+          ],
+        },
+      }));
+      return;
+    }
+
+    if (position === 2) {
+      res.end(JSON.stringify({
+        CardInfoSearch: {
+          responseStatusStrg: 'OK',
+          numOfMatches: 2,
+          totalMatches: 4,
+          CardInfo: [
+            { cardNo: 'EF-0003' },
+            { cardNo: 'EF-0002', employeeNo: '' },
+          ],
+        },
+      }));
+      return;
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected position ${position}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.listAvailableCards();
+    const requests = device.events.filter((event) => event.type === 'authorized');
+    const searchBodies = requests.map((event) => JSON.parse(event.body));
+
+    assert.deepEqual(result, {
+      cards: [
+        { cardNo: 'EF-0002' },
+        { cardNo: 'EF-0003' },
+      ],
+    });
+    assert.equal(requests.length, 2);
+    assert.deepEqual(
+      requests.map((event) => [event.method, event.route]),
+      [
+        ['POST', '/ISAPI/AccessControl/CardInfo/Search?format=json'],
+        ['POST', '/ISAPI/AccessControl/CardInfo/Search?format=json'],
+      ]
+    );
+    assert.deepEqual(
+      searchBodies.map((payload) => payload.CardInfoSearchCond.searchResultPosition),
+      [0, 2]
+    );
+    assert.equal(searchBodies[0].CardInfoSearchCond.EmployeeNoList, undefined);
+    assert.equal(searchBodies[0].CardInfoSearchCond.CardNoList, undefined);
+  } finally {
+    await device.close();
+  }
+});
+
+test('non-2xx Hik responses include method and endpoint details', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      statusCode: 4,
+      statusString: 'Invalid Operation',
+      subStatusCode: 'methodNotAllowed',
+    }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    await assert.rejects(
+      () => hik.addUser({
+        employeeNo: 'EVZ-20260330141516-ABC123',
+        name: 'Jane Doe',
+        beginTime: '2026-03-30T00:00:00',
+        endTime: '2026-07-15T23:59:59',
+      }),
+      /Device returned 400 for PUT \/ISAPI\/AccessControl\/UserInfo\/SetUp\?format=json:/
     );
   } finally {
     await device.close();
