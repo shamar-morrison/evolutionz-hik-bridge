@@ -565,6 +565,118 @@ function createCardDebugRecord(cardInfo) {
   };
 }
 
+function isFocusedDirectProbeEnabled(debugConfig) {
+  return debugConfig.enabled && debugConfig.focusedCardNos.length > 0;
+}
+
+function getFocusedPlaceholderMatches(debugConfig, values = []) {
+  if (!debugConfig.focusedPlaceholderNameSet.size) {
+    return [];
+  }
+
+  const matches = [];
+  const seenMatches = new Set();
+
+  for (const value of values) {
+    if (typeof value !== 'string' || !value) {
+      continue;
+    }
+
+    const normalizedValue = normalizePlaceholderNameForDebug(value);
+
+    if (
+      !normalizedValue ||
+      !debugConfig.focusedPlaceholderNameSet.has(normalizedValue) ||
+      seenMatches.has(normalizedValue)
+    ) {
+      continue;
+    }
+
+    seenMatches.add(normalizedValue);
+    matches.push(normalizedValue);
+  }
+
+  return matches;
+}
+
+function collectFocusedExactPlaceholderNames(debugConfig, userDebugRecord) {
+  return getFocusedPlaceholderMatches(
+    debugConfig,
+    (userDebugRecord?.matchingPlaceholderNames ?? []).map((entry) => entry.value)
+  );
+}
+
+function collectFocusedSlotTokenPrefixes(debugConfig, userDebugRecord) {
+  return getFocusedPlaceholderMatches(
+    debugConfig,
+    (userDebugRecord?.slotTokenCandidates ?? [])
+      .filter((entry) => !entry.exactMatch)
+      .map((entry) => entry.slotToken)
+  );
+}
+
+function buildUserDebugRecordKey(userDebugRecord) {
+  return (
+    userDebugRecord?.slotToken ??
+    userDebugRecord?.placeholderNameHint ??
+    userDebugRecord?.extractedName ??
+    userDebugRecord?.employeeNo ??
+    null
+  );
+}
+
+function buildCardDebugRecordKey(cardDebugRecord) {
+  return cardDebugRecord?.cardNo ?? cardDebugRecord?.employeeNo ?? null;
+}
+
+function createCompactCardSnippet(cardInfo) {
+  if (!cardInfo || typeof cardInfo !== 'object') {
+    return null;
+  }
+
+  const cardNo = typeof cardInfo.cardNo === 'string' ? cardInfo.cardNo.trim() : null;
+  const employeeNo =
+    typeof cardInfo.employeeNo === 'string' ? cardInfo.employeeNo.trim() : null;
+  const cardType = typeof cardInfo.cardType === 'string' ? cardInfo.cardType.trim() : null;
+
+  return {
+    employeeNo,
+    cardNo,
+    cardType,
+  };
+}
+
+function createCompactUserSnippet(userInfo) {
+  if (!userInfo || typeof userInfo !== 'object') {
+    return null;
+  }
+
+  const employeeNo =
+    typeof userInfo.employeeNo === 'string' ? userInfo.employeeNo.trim() : null;
+  const name = typeof userInfo.name === 'string' ? userInfo.name.trim() : null;
+
+  return {
+    employeeNo,
+    name,
+    Valid:
+      userInfo.Valid && typeof userInfo.Valid === 'object'
+        ? {
+            enable: userInfo.Valid.enable ?? null,
+            beginTime: userInfo.Valid.beginTime ?? null,
+            endTime: userInfo.Valid.endTime ?? null,
+          }
+        : null,
+  };
+}
+
+function normalizeSearchMetadata(searchResult, fallbackCount) {
+  return {
+    responseStatusStrg: String(searchResult?.responseStatusStrg ?? 'OK').toUpperCase(),
+    numOfMatches: getNumericField(searchResult?.numOfMatches, fallbackCount),
+    totalMatches: getNumericField(searchResult?.totalMatches, fallbackCount),
+  };
+}
+
 function buildDebugReport({
   focusedPlaceholderNames,
   focusedCardNos,
@@ -793,7 +905,12 @@ async function searchUsers({
   searchID,
   searchResultPosition,
   maxResults = SEARCH_PAGE_SIZE,
+  employeeNos = [],
 }) {
+  const normalizedEmployeeNos = employeeNos
+    .map((employeeNo) => String(employeeNo).trim())
+    .filter(Boolean);
+
   return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/Search?format=json', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -802,6 +919,13 @@ async function searchUsers({
         searchID,
         searchResultPosition,
         maxResults,
+        ...(normalizedEmployeeNos.length > 0
+          ? {
+              EmployeeNoList: normalizedEmployeeNos.map((employeeNo) => ({
+                employeeNo,
+              })),
+            }
+          : {}),
       },
     }),
   });
@@ -877,7 +1001,16 @@ async function searchCards({
   searchID,
   searchResultPosition,
   maxResults = SEARCH_PAGE_SIZE,
+  employeeNos = [],
+  cardNos = [],
 }) {
+  const normalizedEmployeeNos = employeeNos
+    .map((employeeNo) => String(employeeNo).trim())
+    .filter(Boolean);
+  const normalizedCardNos = cardNos
+    .map((cardNo) => String(cardNo).trim())
+    .filter(Boolean);
+
   return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/Search?format=json', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -886,6 +1019,20 @@ async function searchCards({
         searchID,
         searchResultPosition,
         maxResults,
+        ...(normalizedEmployeeNos.length > 0
+          ? {
+              EmployeeNoList: normalizedEmployeeNos.map((employeeNo) => ({
+                employeeNo,
+              })),
+            }
+          : {}),
+        ...(normalizedCardNos.length > 0
+          ? {
+              CardNoList: normalizedCardNos.map((cardNo) => ({
+                cardNo,
+              })),
+            }
+          : {}),
       },
     }),
   });
@@ -943,6 +1090,7 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
   const placeholderPattern = getPlaceholderSlotPattern();
   const debugConfig = getAvailableSlotsDebugConfig();
   const availableSlotsDebugEnabled = debugConfig.enabled;
+  const focusedDirectProbeEnabled = isFocusedDirectProbeEnabled(debugConfig);
   const userSearchID = `evolutionz-users-${Date.now()}`;
   const cardSearchID = `evolutionz-cards-${Date.now()}`;
   const placeholderUsers = new Map();
@@ -950,7 +1098,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
   const userDebugRecordsByJoinEmployeeNo = new Map();
   const cardsByEmployeeNo = new Map();
   const cardDebugRecords = [];
+  const cardDebugRecordsByCardNo = new Map();
   const selectedCardRecordsByJoinEmployeeNo = new Map();
+  const focusedBulkUserPageTraces = [];
+  const focusedBulkCardPageTraces = [];
   const diagnostics = {
     userPages: 0,
     cardPages: 0,
@@ -990,12 +1141,18 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     }
 
     const userInfoList = normalizeUserInfoList(userInfoSearch.UserInfo);
+    const userSearchMetadata = normalizeSearchMetadata(
+      userInfoSearch,
+      userInfoList.length
+    );
+    const pageUserDebugRecords = [];
     diagnostics.userPages += 1;
     diagnostics.totalUsersScanned += userInfoList.length;
 
     for (const userInfo of userInfoList) {
       const userDebugRecord = createUserDebugRecord(userInfo, placeholderPattern, now);
       userDebugRecords.push(userDebugRecord);
+      pageUserDebugRecords.push(userDebugRecord);
 
       if (userDebugRecord.canonicalEmployeeNo) {
         userDebugRecordsByJoinEmployeeNo.set(
@@ -1044,9 +1201,48 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       });
     }
 
-    const responseStatus = String(userInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
-    const matchesOnPage = getNumericField(userInfoSearch.numOfMatches, userInfoList.length);
-    const totalMatches = getNumericField(userInfoSearch.totalMatches, userSearchResultPosition + matchesOnPage);
+    if (focusedDirectProbeEnabled) {
+      const matchingExactFocusedPlaceholderNames = Array.from(
+        new Set(
+          pageUserDebugRecords.flatMap((record) =>
+            collectFocusedExactPlaceholderNames(debugConfig, record)
+          )
+        )
+      );
+      const matchingFocusedSlotTokenPrefixes = Array.from(
+        new Set(
+          pageUserDebugRecords.flatMap((record) =>
+            collectFocusedSlotTokenPrefixes(debugConfig, record)
+          )
+        )
+      );
+
+      focusedBulkUserPageTraces.push({
+        searchResultPosition: userSearchResultPosition,
+        numOfMatches: userSearchMetadata.numOfMatches,
+        totalMatches: userSearchMetadata.totalMatches,
+        responseStatusStrg: userSearchMetadata.responseStatusStrg,
+        firstResultKey: buildUserDebugRecordKey(pageUserDebugRecords[0]),
+        lastResultKey: buildUserDebugRecordKey(
+          pageUserDebugRecords[pageUserDebugRecords.length - 1]
+        ),
+        containsFocusedCardNo: false,
+        containsExactFocusedPlaceholderName:
+          matchingExactFocusedPlaceholderNames.length > 0,
+        containsFocusedSlotTokenPrefix:
+          matchingFocusedSlotTokenPrefixes.length > 0,
+        matchingFocusedCardNos: [],
+        matchingExactFocusedPlaceholderNames,
+        matchingFocusedSlotTokenPrefixes,
+      });
+    }
+
+    const responseStatus = userSearchMetadata.responseStatusStrg;
+    const matchesOnPage = userSearchMetadata.numOfMatches;
+    const totalMatches = getNumericField(
+      userSearchMetadata.totalMatches,
+      userSearchResultPosition + matchesOnPage
+    );
 
     if (!shouldContinuePagedSearch({
       responseStatus,
@@ -1075,12 +1271,22 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     }
 
     const cardInfoList = normalizeCardInfoList(cardInfoSearch.CardInfo);
+    const cardSearchMetadata = normalizeSearchMetadata(
+      cardInfoSearch,
+      cardInfoList.length
+    );
+    const pageCardDebugRecords = [];
     diagnostics.cardPages += 1;
     diagnostics.totalCardsScanned += cardInfoList.length;
 
     for (const cardInfo of cardInfoList) {
       const cardDebugRecord = createCardDebugRecord(cardInfo);
       cardDebugRecords.push(cardDebugRecord);
+      pageCardDebugRecords.push(cardDebugRecord);
+
+      if (cardDebugRecord.cardNo) {
+        cardDebugRecordsByCardNo.set(cardDebugRecord.cardNo, cardDebugRecord);
+      }
 
       if (!cardDebugRecord.employeeNo || !cardDebugRecord.cardNo) {
         if (!cardDebugRecord.employeeNo) {
@@ -1116,9 +1322,58 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       }
     }
 
-    const responseStatus = String(cardInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
-    const matchesOnPage = getNumericField(cardInfoSearch.numOfMatches, cardInfoList.length);
-    const totalMatches = getNumericField(cardInfoSearch.totalMatches, cardSearchResultPosition + matchesOnPage);
+    if (focusedDirectProbeEnabled) {
+      const pageUserDebugRecords = pageCardDebugRecords
+        .map((record) =>
+          record.canonicalEmployeeNo
+            ? userDebugRecordsByJoinEmployeeNo.get(record.canonicalEmployeeNo) ?? null
+            : null
+        )
+        .filter(Boolean);
+      const matchingFocusedCardNos = pageCardDebugRecords
+        .filter((record) => isFocusedCardNoMatch(debugConfig, record.cardNo))
+        .map((record) => record.cardNo);
+      const matchingExactFocusedPlaceholderNames = Array.from(
+        new Set(
+          pageUserDebugRecords.flatMap((record) =>
+            collectFocusedExactPlaceholderNames(debugConfig, record)
+          )
+        )
+      );
+      const matchingFocusedSlotTokenPrefixes = Array.from(
+        new Set(
+          pageUserDebugRecords.flatMap((record) =>
+            collectFocusedSlotTokenPrefixes(debugConfig, record)
+          )
+        )
+      );
+
+      focusedBulkCardPageTraces.push({
+        searchResultPosition: cardSearchResultPosition,
+        numOfMatches: cardSearchMetadata.numOfMatches,
+        totalMatches: cardSearchMetadata.totalMatches,
+        responseStatusStrg: cardSearchMetadata.responseStatusStrg,
+        firstResultKey: buildCardDebugRecordKey(pageCardDebugRecords[0]),
+        lastResultKey: buildCardDebugRecordKey(
+          pageCardDebugRecords[pageCardDebugRecords.length - 1]
+        ),
+        containsFocusedCardNo: matchingFocusedCardNos.length > 0,
+        containsExactFocusedPlaceholderName:
+          matchingExactFocusedPlaceholderNames.length > 0,
+        containsFocusedSlotTokenPrefix:
+          matchingFocusedSlotTokenPrefixes.length > 0,
+        matchingFocusedCardNos,
+        matchingExactFocusedPlaceholderNames,
+        matchingFocusedSlotTokenPrefixes,
+      });
+    }
+
+    const responseStatus = cardSearchMetadata.responseStatusStrg;
+    const matchesOnPage = cardSearchMetadata.numOfMatches;
+    const totalMatches = getNumericField(
+      cardSearchMetadata.totalMatches,
+      cardSearchResultPosition + matchesOnPage
+    );
 
     if (!shouldContinuePagedSearch({
       responseStatus,
@@ -1230,6 +1485,270 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       rawUserInfo: userDebugRecord?.rawUserInfo ?? null,
       forceInclude,
     });
+  }
+
+  const focusedDirectProbeRecords = [];
+  const focusedComparisonRecords = [];
+
+  if (focusedDirectProbeEnabled) {
+    const bulkFocusedUserRecords = userDebugRecords.filter((record) => {
+      const exactMatches = collectFocusedExactPlaceholderNames(debugConfig, record);
+      const prefixMatches = collectFocusedSlotTokenPrefixes(debugConfig, record);
+
+      return exactMatches.length > 0 || prefixMatches.length > 0;
+    });
+
+    for (const [probeIndex, focusedCardNo] of debugConfig.focusedCardNos.entries()) {
+      const directCardProbeRecord = {
+        key: focusedCardNo,
+        cardNo: focusedCardNo,
+        request: {
+          searchID: `focused-card-probe-${probeIndex + 1}`,
+          searchResultPosition: 0,
+          maxResults,
+          cardNoList: [focusedCardNo],
+        },
+        responseStatusStrg: null,
+        numOfMatches: null,
+        totalMatches: null,
+        returnedEmployeeNos: [],
+        rawCardInfo: [],
+        userProbes: [],
+        error: null,
+      };
+      const directCardDebugRecords = [];
+
+      try {
+        const directCardResponse = await searchCards({
+          searchID: `evolutionz-focused-card-${Date.now()}-${probeIndex}`,
+          searchResultPosition: 0,
+          maxResults,
+          cardNos: [focusedCardNo],
+        });
+        const directCardSearch = directCardResponse?.CardInfoSearch;
+
+        if (!directCardSearch || typeof directCardSearch !== 'object') {
+          throw new Error('Device returned an unexpected focused card probe response.');
+        }
+
+        const directCardInfoList = normalizeCardInfoList(directCardSearch.CardInfo);
+        const directCardMetadata = normalizeSearchMetadata(
+          directCardSearch,
+          directCardInfoList.length
+        );
+
+        directCardProbeRecord.responseStatusStrg = directCardMetadata.responseStatusStrg;
+        directCardProbeRecord.numOfMatches = directCardMetadata.numOfMatches;
+        directCardProbeRecord.totalMatches = directCardMetadata.totalMatches;
+        directCardProbeRecord.rawCardInfo = directCardInfoList;
+
+        const directEmployeeNos = [];
+        const seenDirectEmployeeNos = new Set();
+
+        for (const cardInfo of directCardInfoList) {
+          const directCardDebugRecord = createCardDebugRecord(cardInfo);
+          directCardDebugRecords.push(directCardDebugRecord);
+
+          if (
+            directCardDebugRecord.employeeNo &&
+            !seenDirectEmployeeNos.has(directCardDebugRecord.employeeNo)
+          ) {
+            seenDirectEmployeeNos.add(directCardDebugRecord.employeeNo);
+            directEmployeeNos.push(directCardDebugRecord.employeeNo);
+          }
+        }
+
+        directCardProbeRecord.returnedEmployeeNos = directEmployeeNos;
+
+        for (const [userProbeIndex, employeeNo] of directEmployeeNos.entries()) {
+          const directUserProbeRecord = {
+            key: employeeNo,
+            employeeNo,
+            canonicalEmployeeNo: canonicalizeEmployeeNo(employeeNo),
+            request: {
+              searchID: `focused-user-probe-${probeIndex + 1}-${userProbeIndex + 1}`,
+              searchResultPosition: 0,
+              maxResults,
+              employeeNoList: [employeeNo],
+            },
+            responseStatusStrg: null,
+            numOfMatches: null,
+            totalMatches: null,
+            returnedNames: [],
+            rawUserInfo: [],
+            userRecords: [],
+            error: null,
+          };
+
+          try {
+            const directUserResponse = await searchUsers({
+              searchID: `evolutionz-focused-user-${Date.now()}-${probeIndex}-${userProbeIndex}`,
+              searchResultPosition: 0,
+              maxResults,
+              employeeNos: [employeeNo],
+            });
+            const directUserSearch = directUserResponse?.UserInfoSearch;
+
+            if (!directUserSearch || typeof directUserSearch !== 'object') {
+              throw new Error('Device returned an unexpected focused user probe response.');
+            }
+
+            const directUserInfoList = normalizeUserInfoList(directUserSearch.UserInfo);
+            const directUserMetadata = normalizeSearchMetadata(
+              directUserSearch,
+              directUserInfoList.length
+            );
+
+            directUserProbeRecord.responseStatusStrg = directUserMetadata.responseStatusStrg;
+            directUserProbeRecord.numOfMatches = directUserMetadata.numOfMatches;
+            directUserProbeRecord.totalMatches = directUserMetadata.totalMatches;
+            directUserProbeRecord.returnedNames = Array.from(
+              new Set(
+                directUserInfoList
+                  .map((userInfo) =>
+                    typeof userInfo?.name === 'string' ? userInfo.name.trim() : ''
+                  )
+                  .filter(Boolean)
+              )
+            );
+            directUserProbeRecord.rawUserInfo = directUserInfoList;
+            directUserProbeRecord.userRecords = directUserInfoList.map((userInfo) =>
+              createUserDebugRecord(userInfo, placeholderPattern, now)
+            );
+          } catch (error) {
+            directUserProbeRecord.error = error instanceof Error ? error.message : String(error);
+          }
+
+          directCardProbeRecord.userProbes.push(directUserProbeRecord);
+        }
+      } catch (error) {
+        directCardProbeRecord.error = error instanceof Error ? error.message : String(error);
+      }
+
+      focusedDirectProbeRecords.push(directCardProbeRecord);
+
+      const bulkCardRecord = cardDebugRecordsByCardNo.get(focusedCardNo) ?? null;
+      const bulkUserRecord =
+        bulkCardRecord?.canonicalEmployeeNo
+          ? userDebugRecordsByJoinEmployeeNo.get(bulkCardRecord.canonicalEmployeeNo) ?? null
+          : null;
+      const directMatchingCardRecords = directCardDebugRecords.filter(
+        (record) => record.cardNo === focusedCardNo
+      );
+      const directMatchingJoinEmployeeNos = new Set(
+        directMatchingCardRecords
+          .map((record) => record.canonicalEmployeeNo)
+          .filter(Boolean)
+      );
+      const directMatchingUserRecords = directCardProbeRecord.userProbes
+        .flatMap((probe) => probe.userRecords ?? [])
+        .filter(
+          (record) =>
+            !!record.canonicalEmployeeNo &&
+            directMatchingJoinEmployeeNos.has(record.canonicalEmployeeNo)
+        );
+      const matchedFocusedSlotTokens = Array.from(
+        new Set([
+          ...bulkFocusedUserRecords.flatMap((record) => [
+            ...collectFocusedExactPlaceholderNames(debugConfig, record),
+            ...collectFocusedSlotTokenPrefixes(debugConfig, record),
+          ]),
+          ...directMatchingUserRecords.flatMap((record) => [
+            ...collectFocusedExactPlaceholderNames(debugConfig, record),
+            ...collectFocusedSlotTokenPrefixes(debugConfig, record),
+          ]),
+          ...debugConfig.focusedPlaceholderNames.map((value) =>
+            normalizePlaceholderNameForDebug(value)
+          ),
+        ].filter(Boolean))
+      );
+      const bulkHasFocusedEvidence =
+        !!bulkCardRecord || bulkFocusedUserRecords.length > 0;
+      const directHasFocusedEvidence =
+        directMatchingCardRecords.length > 0 || directMatchingUserRecords.length > 0;
+      const classification = bulkHasFocusedEvidence
+        ? directHasFocusedEvidence
+          ? 'foundInBulkAndDirect'
+          : 'foundBulkOnly'
+        : directHasFocusedEvidence
+          ? 'foundDirectOnly'
+          : 'notFoundAnywhere';
+
+      focusedComparisonRecords.push({
+        key:
+          matchedFocusedSlotTokens[0]
+            ? `${focusedCardNo} • ${matchedFocusedSlotTokens[0]}`
+            : focusedCardNo,
+        cardNo: focusedCardNo,
+        slotTokens: matchedFocusedSlotTokens,
+        classification,
+        bulkCardFound: !!bulkCardRecord,
+        directCardFound: directMatchingCardRecords.length > 0,
+        bulkFocusedUserSeen: bulkFocusedUserRecords.length > 0,
+        directProbeError: directCardProbeRecord.error,
+        bulkEmployeeNo: bulkCardRecord?.employeeNo ?? bulkUserRecord?.employeeNo ?? null,
+        directEmployeeNos: Array.from(
+          new Set(
+            directMatchingCardRecords
+              .map((record) => record.employeeNo)
+              .filter(Boolean)
+          )
+        ),
+        bulkUserName: bulkUserRecord?.extractedName ?? null,
+        directUserNames: Array.from(
+          new Set(
+            directMatchingUserRecords
+              .map((record) => record.extractedName)
+              .filter(Boolean)
+          )
+        ),
+        bulkSlotToken: bulkUserRecord?.slotToken ?? null,
+        directSlotTokens: Array.from(
+          new Set(
+            directMatchingUserRecords
+              .map((record) => record.slotToken)
+              .filter(Boolean)
+          )
+        ),
+        bulkCard: bulkCardRecord
+          ? {
+              employeeNo: bulkCardRecord.employeeNo || null,
+              canonicalEmployeeNo: bulkCardRecord.canonicalEmployeeNo || null,
+              rawCardInfo: createCompactCardSnippet(bulkCardRecord.rawCardInfo),
+            }
+          : null,
+        bulkUser: bulkUserRecord
+          ? {
+              employeeNo: bulkUserRecord.employeeNo || null,
+              canonicalEmployeeNo: bulkUserRecord.canonicalEmployeeNo || null,
+              extractedName: bulkUserRecord.extractedName || null,
+              slotToken: bulkUserRecord.slotToken || null,
+              rawUserInfo: createCompactUserSnippet(bulkUserRecord.rawUserInfo),
+            }
+          : null,
+        bulkFocusedUsers: bulkFocusedUserRecords.map((record) => ({
+          employeeNo: record.employeeNo || null,
+          canonicalEmployeeNo: record.canonicalEmployeeNo || null,
+          extractedName: record.extractedName || null,
+          slotToken: record.slotToken || null,
+          classification: record.classification,
+          rawUserInfo: createCompactUserSnippet(record.rawUserInfo),
+        })),
+        directCards: directMatchingCardRecords.map((record) => ({
+          employeeNo: record.employeeNo || null,
+          canonicalEmployeeNo: record.canonicalEmployeeNo || null,
+          rawCardInfo: createCompactCardSnippet(record.rawCardInfo),
+        })),
+        directUsers: directMatchingUserRecords.map((record) => ({
+          employeeNo: record.employeeNo || null,
+          canonicalEmployeeNo: record.canonicalEmployeeNo || null,
+          extractedName: record.extractedName || null,
+          slotToken: record.slotToken || null,
+          classification: record.classification,
+          rawUserInfo: createCompactUserSnippet(record.rawUserInfo),
+        })),
+      });
+    }
   }
 
   console.info('[hik] listAvailableSlots diagnostics', diagnostics);
@@ -1419,6 +1938,25 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       '[hik] listAvailableSlots card-backed non-slots',
       cardBackedNonSlotsReport
     );
+
+    if (focusedDirectProbeEnabled) {
+      logDebugJson('[hik] listAvailableSlots focused bulk page trace', {
+        focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+        focusedCardNos: debugConfig.focusedCardNos,
+        userPages: focusedBulkUserPageTraces,
+        cardPages: focusedBulkCardPageTraces,
+      });
+      logDebugJson('[hik] listAvailableSlots focused direct card probes', {
+        focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+        focusedCardNos: debugConfig.focusedCardNos,
+        probes: focusedDirectProbeRecords,
+      });
+      logDebugJson('[hik] listAvailableSlots focused comparison report', {
+        focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+        focusedCardNos: debugConfig.focusedCardNos,
+        records: focusedComparisonRecords,
+      });
+    }
   }
 
   return {

@@ -58,6 +58,7 @@ Set `HIK_DEBUG_AVAILABLE_SLOTS=1` temporarily when you need extra `list_availabl
 Use `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS` when you need to force specific slot labels or card numbers into the debug output, for example `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=P55` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=0105451261`.
 Reusable slots are exact labels only, such as `P4` or `P55`. Names like `P4 Ackeem Planter` or `P55 Jane Doe` are treated as occupied and stay unavailable even if their validity has expired.
 If the gym laptop `.env` still pins `HIK_PLACEHOLDER_SLOT_PATTERN=^[A-Z]\d{2}$`, update it to `^[A-Z]\d{1,2}$` or remove the override so one-digit exact slot labels are not missed.
+When both `HIK_DEBUG_AVAILABLE_SLOTS=1` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS` are set, the bridge also logs focused bulk page traces, direct `CardNoList` card probes, direct `EmployeeNoList` user probes for any returned employee numbers, and a final bulk-vs-direct comparison report. For example, use `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=P55` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=0105451261` to compare what the laptop sees in bulk pagination against what the device returns for a direct probe of card `0105451261`.
 
 ### 4. Run the service
 ```bash

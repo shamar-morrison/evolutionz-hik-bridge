@@ -1636,9 +1636,31 @@ test('listAvailableSlots focused placeholder and card filters override generic d
     const payload = JSON.parse(body);
 
     if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const requestedEmployeeNos = (payload.UserInfoSearchCond.EmployeeNoList ?? []).map(
+        (entry) => entry.employeeNo
+      );
       const position = payload.UserInfoSearchCond.searchResultPosition;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (requestedEmployeeNos.length > 0) {
+        const requestedCanonicalEmployeeNos = requestedEmployeeNos.map((value) =>
+          value.replace(/^0+/, '') || '0'
+        );
+        const matchingUsers = userInfo.filter((entry) =>
+          requestedCanonicalEmployeeNos.includes(entry.employeeNo.replace(/^0+/, '') || '0')
+        );
+
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: matchingUsers.length,
+            totalMatches: matchingUsers.length,
+            UserInfo: matchingUsers,
+          },
+        }));
+        return;
+      }
 
       if (position === 0) {
         res.end(JSON.stringify({
@@ -1654,9 +1676,28 @@ test('listAvailableSlots focused placeholder and card filters override generic d
     }
 
     if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const requestedCardNos = (payload.CardInfoSearchCond.CardNoList ?? []).map(
+        (entry) => entry.cardNo
+      );
       const position = payload.CardInfoSearchCond.searchResultPosition;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (requestedCardNos.length > 0) {
+        const matchingCards = cardInfo.filter((entry) =>
+          requestedCardNos.includes(entry.cardNo)
+        );
+
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: matchingCards.length,
+            totalMatches: matchingCards.length,
+            CardInfo: matchingCards,
+          },
+        }));
+        return;
+      }
 
       if (position === 0) {
         res.end(JSON.stringify({
@@ -1699,6 +1740,14 @@ test('listAvailableSlots focused placeholder and card filters override generic d
     const nonSlotReport = findJsonLog(
       infoCalls,
       '[hik] listAvailableSlots card-backed non-slots'
+    );
+    const focusedPageTraceReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused bulk page trace'
+    );
+    const focusedComparisonReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused comparison report'
     );
 
     assert.equal(cardReport.sampleLimit, 10);
@@ -1753,6 +1802,412 @@ test('listAvailableSlots focused placeholder and card filters override generic d
         },
       }
     );
+
+    assert.equal(focusedPageTraceReport.userPages[0].containsFocusedSlotTokenPrefix, true);
+    assert.deepEqual(
+      focusedPageTraceReport.userPages[0].matchingFocusedSlotTokenPrefixes,
+      ['P55']
+    );
+    assert.equal(focusedPageTraceReport.cardPages[0].containsFocusedCardNo, true);
+    assert.deepEqual(
+      focusedComparisonReport.records,
+      [
+        {
+          key: '9999999999 • P55',
+          cardNo: '9999999999',
+          slotTokens: ['P55'],
+          classification: 'foundInBulkAndDirect',
+          bulkCardFound: true,
+          directCardFound: true,
+          bulkFocusedUserSeen: true,
+          directProbeError: null,
+          bulkEmployeeNo: '911',
+          directEmployeeNos: ['911'],
+          bulkUserName: 'P55 John Doe',
+          directUserNames: ['P55 John Doe'],
+          bulkSlotToken: 'P55',
+          directSlotTokens: ['P55'],
+          bulkCard: {
+            employeeNo: '911',
+            canonicalEmployeeNo: '911',
+            rawCardInfo: {
+              employeeNo: '911',
+              cardNo: '9999999999',
+              cardType: null,
+            },
+          },
+          bulkUser: {
+            employeeNo: '00000911',
+            canonicalEmployeeNo: '911',
+            extractedName: 'P55 John Doe',
+            slotToken: 'P55',
+            rawUserInfo: {
+              employeeNo: '00000911',
+              name: 'P55 John Doe',
+              Valid: null,
+            },
+          },
+          bulkFocusedUsers: [
+            {
+              employeeNo: '00000911',
+              canonicalEmployeeNo: '911',
+              extractedName: 'P55 John Doe',
+              slotToken: 'P55',
+              classification: 'occupiedSlotName',
+              rawUserInfo: {
+                employeeNo: '00000911',
+                name: 'P55 John Doe',
+                Valid: null,
+              },
+            },
+          ],
+          directCards: [
+            {
+              employeeNo: '911',
+              canonicalEmployeeNo: '911',
+              rawCardInfo: {
+                employeeNo: '911',
+                cardNo: '9999999999',
+                cardType: null,
+              },
+            },
+          ],
+          directUsers: [
+            {
+              employeeNo: '00000911',
+              canonicalEmployeeNo: '911',
+              extractedName: 'P55 John Doe',
+              slotToken: 'P55',
+              classification: 'occupiedSlotName',
+              rawUserInfo: {
+                employeeNo: '00000911',
+                name: 'P55 John Doe',
+                Valid: null,
+              },
+            },
+          ],
+        },
+      ]
+    );
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots focused comparison report marks focused cards found only by direct probe', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const requestedEmployeeNos = (payload.UserInfoSearchCond.EmployeeNoList ?? []).map(
+        (entry) => entry.employeeNo
+      );
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (requestedEmployeeNos.length > 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            UserInfo: [
+              {
+                employeeNo: '00000955',
+                name: 'P55',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            UserInfo: [
+              {
+                employeeNo: '00000001',
+                name: 'A1 Kimberly Connell',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const requestedCardNos = (payload.CardInfoSearchCond.CardNoList ?? []).map(
+        (entry) => entry.cardNo
+      );
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (requestedCardNos.length > 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            CardInfo: [
+              {
+                employeeNo: '955',
+                cardNo: '0105451261',
+                cardType: 'normalCard',
+              },
+            ],
+          },
+        }));
+        return;
+      }
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            CardInfo: [
+              {
+                employeeNo: '1',
+                cardNo: '0100000001',
+                cardType: 'normalCard',
+              },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P55',
+    HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS: '0105451261',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    const directProbeReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused direct card probes'
+    );
+    const comparisonReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused comparison report'
+    );
+
+    assert.equal(directProbeReport.probes.length, 1);
+    assert.deepEqual(directProbeReport.probes[0].request, {
+      searchID: 'focused-card-probe-1',
+      searchResultPosition: 0,
+      maxResults: 30,
+      cardNoList: ['0105451261'],
+    });
+    assert.equal(directProbeReport.probes[0].responseStatusStrg, 'OK');
+    assert.equal(directProbeReport.probes[0].numOfMatches, 1);
+    assert.equal(directProbeReport.probes[0].totalMatches, 1);
+    assert.deepEqual(directProbeReport.probes[0].returnedEmployeeNos, ['955']);
+    assert.deepEqual(directProbeReport.probes[0].rawCardInfo, [
+      {
+        employeeNo: '955',
+        cardNo: '0105451261',
+        cardType: 'normalCard',
+      },
+    ]);
+    assert.equal(directProbeReport.probes[0].userProbes.length, 1);
+    assert.deepEqual(directProbeReport.probes[0].userProbes[0].request, {
+      searchID: 'focused-user-probe-1-1',
+      searchResultPosition: 0,
+      maxResults: 30,
+      employeeNoList: ['955'],
+    });
+    assert.equal(directProbeReport.probes[0].userProbes[0].responseStatusStrg, 'OK');
+    assert.deepEqual(directProbeReport.probes[0].userProbes[0].returnedNames, ['P55']);
+    assert.equal(
+      directProbeReport.probes[0].userProbes[0].userRecords[0].classification,
+      'validPlaceholder'
+    );
+    assert.equal(
+      directProbeReport.probes[0].userProbes[0].userRecords[0].slotToken,
+      'P55'
+    );
+
+    assert.deepEqual(comparisonReport.records, [
+      {
+        key: '0105451261 • P55',
+        cardNo: '0105451261',
+        slotTokens: ['P55'],
+        classification: 'foundDirectOnly',
+        bulkCardFound: false,
+        directCardFound: true,
+        bulkFocusedUserSeen: false,
+        directProbeError: null,
+        bulkEmployeeNo: null,
+        directEmployeeNos: ['955'],
+        bulkUserName: null,
+        directUserNames: ['P55'],
+        bulkSlotToken: null,
+        directSlotTokens: ['P55'],
+        bulkCard: null,
+        bulkUser: null,
+        bulkFocusedUsers: [],
+        directCards: [
+          {
+            employeeNo: '955',
+            canonicalEmployeeNo: '955',
+            rawCardInfo: {
+              employeeNo: '955',
+              cardNo: '0105451261',
+              cardType: 'normalCard',
+            },
+          },
+        ],
+        directUsers: [
+          {
+            employeeNo: '00000955',
+            canonicalEmployeeNo: '955',
+            extractedName: 'P55',
+            slotToken: 'P55',
+            classification: 'validPlaceholder',
+            rawUserInfo: {
+              employeeNo: '00000955',
+              name: 'P55',
+              Valid: {
+                enable: true,
+                beginTime: '2020-01-01T00:00:00',
+                endTime: '2030-12-31T23:59:59',
+              },
+            },
+          },
+        ],
+      },
+    ]);
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots focused comparison report marks focused cards missing from both bulk and direct probes', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 0,
+            totalMatches: 0,
+            UserInfo: [],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 0,
+            totalMatches: 0,
+            CardInfo: [],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P55',
+    HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS: '0105451261',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    const comparisonReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots focused comparison report'
+    );
+
+    assert.deepEqual(comparisonReport.records, [
+      {
+        key: '0105451261 • P55',
+        cardNo: '0105451261',
+        slotTokens: ['P55'],
+        classification: 'notFoundAnywhere',
+        bulkCardFound: false,
+        directCardFound: false,
+        bulkFocusedUserSeen: false,
+        directProbeError: null,
+        bulkEmployeeNo: null,
+        directEmployeeNos: [],
+        bulkUserName: null,
+        directUserNames: [],
+        bulkSlotToken: null,
+        directSlotTokens: [],
+        bulkCard: null,
+        bulkUser: null,
+        bulkFocusedUsers: [],
+        directCards: [],
+        directUsers: [],
+      },
+    ]);
   } finally {
     console.info = originalInfo;
     await device.close();
