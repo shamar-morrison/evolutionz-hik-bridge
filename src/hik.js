@@ -318,26 +318,211 @@ function recordInvalidValidity(invalidValidityDiagnostics, reason) {
   }
 }
 
-function addDroppedPlaceholderSample({
-  droppedPlaceholderSamples,
-  employeeNo,
-  placeholderName,
-  reason,
-  rawValid,
-  normalizedValidity,
-}) {
-  if (droppedPlaceholderSamples.samples.length >= AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT) {
-    droppedPlaceholderSamples.omittedCount += 1;
-    return;
+function parseCommaSeparatedEnv(value) {
+  if (typeof value !== 'string') {
+    return [];
   }
 
-  droppedPlaceholderSamples.samples.push({
-    reason,
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizePlaceholderNameForDebug(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().toUpperCase();
+}
+
+function getAvailableSlotsDebugConfig() {
+  const focusedPlaceholderNames = parseCommaSeparatedEnv(
+    process.env.HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES
+  );
+  const focusedCardNos = parseCommaSeparatedEnv(
+    process.env.HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS
+  );
+
+  return {
+    enabled: isAvailableSlotsDebugEnabled(),
+    focusedPlaceholderNames,
+    focusedCardNos,
+    focusedPlaceholderNameSet: new Set(
+      focusedPlaceholderNames.map((value) => normalizePlaceholderNameForDebug(value))
+    ),
+    focusedCardNoSet: new Set(focusedCardNos),
+  };
+}
+
+function createCardBackedNonSlotDiagnostics() {
+  return {
+    total: 0,
+    missingUserRecord: 0,
+    missingPlaceholderName: 0,
+    nonPlaceholderName: 0,
+    invalidValidity: createInvalidValidityDiagnostics(),
+  };
+}
+
+function extractNameCandidates(record) {
+  const nameCandidates = {};
+
+  if (!record || typeof record !== 'object') {
+    return nameCandidates;
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (!key.toLowerCase().includes('name') || typeof value !== 'string') {
+      continue;
+    }
+
+    const trimmedValue = value.trim();
+
+    if (!trimmedValue) {
+      continue;
+    }
+
+    nameCandidates[key] = trimmedValue;
+  }
+
+  return nameCandidates;
+}
+
+function collectMatchingPlaceholderNames(nameCandidates, placeholderPattern) {
+  const matchingPlaceholderNames = [];
+  const seenValues = new Set();
+
+  for (const [key, value] of Object.entries(nameCandidates)) {
+    if (!placeholderPattern.test(value) || seenValues.has(value)) {
+      continue;
+    }
+
+    seenValues.add(value);
+    matchingPlaceholderNames.push({
+      key,
+      value,
+    });
+  }
+
+  return matchingPlaceholderNames;
+}
+
+function hasFocusedPlaceholderMatch(debugConfig, values = []) {
+  if (!debugConfig.focusedPlaceholderNameSet.size) {
+    return false;
+  }
+
+  return values.some((value) =>
+    debugConfig.focusedPlaceholderNameSet.has(normalizePlaceholderNameForDebug(value))
+  );
+}
+
+function isFocusedCardNoMatch(debugConfig, cardNo) {
+  return !!cardNo && debugConfig.focusedCardNoSet.has(cardNo);
+}
+
+function createUserDebugRecord(userInfo, placeholderPattern, now) {
+  const employeeNo = typeof userInfo?.employeeNo === 'string' ? userInfo.employeeNo.trim() : '';
+  const canonicalEmployeeNo = canonicalizeEmployeeNo(employeeNo);
+  const extractedName = typeof userInfo?.name === 'string' ? userInfo.name.trim() : '';
+  const nameCandidates = extractNameCandidates(userInfo);
+  const matchingPlaceholderNames = collectMatchingPlaceholderNames(
+    nameCandidates,
+    placeholderPattern
+  );
+  const placeholderNameHint =
+    matchingPlaceholderNames[0]?.value ??
+    (placeholderPattern.test(extractedName) ? extractedName : null);
+
+  let classification = 'validPlaceholder';
+  let validityEvaluated = false;
+  let isCurrentlyValid = null;
+  let validityReason = null;
+  let normalizedValidity = null;
+
+  if (!employeeNo) {
+    classification = 'missingEmployeeNo';
+  } else if (!extractedName) {
+    classification = 'missingPlaceholderName';
+  } else if (!placeholderPattern.test(extractedName)) {
+    classification = 'nonPlaceholderName';
+  } else {
+    const validity = analyzeUserValidity(userInfo, now);
+
+    validityEvaluated = true;
+    isCurrentlyValid = validity.isValid;
+    validityReason = validity.reason;
+    normalizedValidity = validity.normalizedValidity;
+    classification = validity.isValid ? 'validPlaceholder' : 'invalidValidity';
+  }
+
+  return {
     employeeNo,
-    name: placeholderName,
-    rawValid,
+    canonicalEmployeeNo,
+    extractedName,
+    placeholderNameHint,
+    nameCandidates,
+    matchingPlaceholderNames,
+    classification,
+    validityEvaluated,
+    isCurrentlyValid,
+    validityReason,
     normalizedValidity,
-  });
+    rawUserInfo: userInfo ?? null,
+  };
+}
+
+function createCardDebugRecord(cardInfo) {
+  const employeeNo = typeof cardInfo?.employeeNo === 'string' ? cardInfo.employeeNo.trim() : '';
+  const cardNo = typeof cardInfo?.cardNo === 'string' ? cardInfo.cardNo.trim() : '';
+
+  return {
+    employeeNo,
+    canonicalEmployeeNo: canonicalizeEmployeeNo(employeeNo),
+    cardNo,
+    rawCardInfo: cardInfo ?? null,
+  };
+}
+
+function buildDebugReport({
+  focusedPlaceholderNames,
+  focusedCardNos,
+  records,
+}) {
+  const selectedRecords = [];
+  let sampledNonForcedCount = 0;
+  let omittedCount = 0;
+
+  for (const record of records) {
+    const { forceInclude = false, ...serializableRecord } = record;
+
+    if (forceInclude || sampledNonForcedCount < AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT) {
+      selectedRecords.push(serializableRecord);
+
+      if (!forceInclude) {
+        sampledNonForcedCount += 1;
+      }
+
+      continue;
+    }
+
+    omittedCount += 1;
+  }
+
+  return {
+    sampleLimit: AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT,
+    focusedPlaceholderNames,
+    focusedCardNos,
+    totalRelevantRecords: records.length,
+    omittedCount,
+    records: selectedRecords,
+  };
+}
+
+function logDebugJson(label, value) {
+  console.info(`${label}\n${JSON.stringify(value, null, 2)}`);
 }
 
 function canonicalizeEmployeeNo(value) {
@@ -677,15 +862,16 @@ export async function listAvailableCards({ maxResults = SEARCH_PAGE_SIZE } = {})
 
 export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = new Date() } = {}) {
   const placeholderPattern = getPlaceholderSlotPattern();
-  const availableSlotsDebugEnabled = isAvailableSlotsDebugEnabled();
+  const debugConfig = getAvailableSlotsDebugConfig();
+  const availableSlotsDebugEnabled = debugConfig.enabled;
   const userSearchID = `evolutionz-users-${Date.now()}`;
   const cardSearchID = `evolutionz-cards-${Date.now()}`;
   const placeholderUsers = new Map();
+  const userDebugRecords = [];
+  const userDebugRecordsByJoinEmployeeNo = new Map();
   const cardsByEmployeeNo = new Map();
-  const droppedPlaceholderSamples = {
-    samples: [],
-    omittedCount: 0,
-  };
+  const cardDebugRecords = [];
+  const selectedCardRecordsByJoinEmployeeNo = new Map();
   const diagnostics = {
     userPages: 0,
     cardPages: 0,
@@ -706,6 +892,7 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     droppedSlots: {
       withoutCard: 0,
     },
+    cardBackedNonSlots: createCardBackedNonSlotDiagnostics(),
   };
   let userSearchResultPosition = 0;
   let cardSearchResultPosition = 0;
@@ -727,56 +914,48 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     diagnostics.totalUsersScanned += userInfoList.length;
 
     for (const userInfo of userInfoList) {
-      const employeeNo = typeof userInfo?.employeeNo === 'string' ? userInfo.employeeNo.trim() : '';
-      const placeholderName = typeof userInfo?.name === 'string' ? userInfo.name.trim() : '';
+      const userDebugRecord = createUserDebugRecord(userInfo, placeholderPattern, now);
+      userDebugRecords.push(userDebugRecord);
 
-      if (!employeeNo || !placeholderName) {
-        if (!employeeNo) {
-          diagnostics.droppedUsers.missingEmployeeNo += 1;
-        }
-
-        if (!placeholderName) {
-          diagnostics.droppedUsers.missingPlaceholderName += 1;
-        }
-
-        continue;
+      if (userDebugRecord.canonicalEmployeeNo) {
+        userDebugRecordsByJoinEmployeeNo.set(
+          userDebugRecord.canonicalEmployeeNo,
+          userDebugRecord
+        );
       }
 
-      if (!placeholderPattern.test(placeholderName)) {
-        diagnostics.droppedUsers.nonPlaceholderName += 1;
-        continue;
-      }
-
-      const validity = analyzeUserValidity(userInfo, now);
-
-      if (!validity.isValid) {
-        recordInvalidValidity(diagnostics.droppedUsers.invalidValidity, validity.reason);
-
-        if (availableSlotsDebugEnabled) {
-          addDroppedPlaceholderSample({
-            droppedPlaceholderSamples,
-            employeeNo,
-            placeholderName,
-            reason: validity.reason,
-            rawValid: validity.rawValid,
-            normalizedValidity: validity.normalizedValidity,
-          });
-        }
-
-        continue;
-      }
-
-      const joinEmployeeNo = canonicalizeEmployeeNo(employeeNo);
-
-      if (!joinEmployeeNo) {
+      if (userDebugRecord.classification === 'missingEmployeeNo') {
         diagnostics.droppedUsers.missingEmployeeNo += 1;
         continue;
       }
 
-      placeholderUsers.set(joinEmployeeNo, {
-        employeeNo,
-        joinEmployeeNo,
-        placeholderName,
+      if (userDebugRecord.classification === 'missingPlaceholderName') {
+        diagnostics.droppedUsers.missingPlaceholderName += 1;
+        continue;
+      }
+
+      if (userDebugRecord.classification === 'nonPlaceholderName') {
+        diagnostics.droppedUsers.nonPlaceholderName += 1;
+        continue;
+      }
+
+      if (userDebugRecord.classification === 'invalidValidity') {
+        recordInvalidValidity(
+          diagnostics.droppedUsers.invalidValidity,
+          userDebugRecord.validityReason
+        );
+        continue;
+      }
+
+      if (!userDebugRecord.canonicalEmployeeNo) {
+        diagnostics.droppedUsers.missingEmployeeNo += 1;
+        continue;
+      }
+
+      placeholderUsers.set(userDebugRecord.canonicalEmployeeNo, {
+        employeeNo: userDebugRecord.employeeNo,
+        joinEmployeeNo: userDebugRecord.canonicalEmployeeNo,
+        placeholderName: userDebugRecord.extractedName,
       });
     }
 
@@ -815,32 +994,40 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     diagnostics.totalCardsScanned += cardInfoList.length;
 
     for (const cardInfo of cardInfoList) {
-      const employeeNo = typeof cardInfo?.employeeNo === 'string' ? cardInfo.employeeNo.trim() : '';
-      const cardNo = typeof cardInfo?.cardNo === 'string' ? cardInfo.cardNo.trim() : '';
+      const cardDebugRecord = createCardDebugRecord(cardInfo);
+      cardDebugRecords.push(cardDebugRecord);
 
-      if (!employeeNo || !cardNo) {
-        if (!employeeNo) {
+      if (!cardDebugRecord.employeeNo || !cardDebugRecord.cardNo) {
+        if (!cardDebugRecord.employeeNo) {
           diagnostics.droppedCards.missingEmployeeNo += 1;
         }
 
-        if (!cardNo) {
+        if (!cardDebugRecord.cardNo) {
           diagnostics.droppedCards.missingCardNo += 1;
         }
 
         continue;
       }
 
-      const joinEmployeeNo = canonicalizeEmployeeNo(employeeNo);
-
-      if (!joinEmployeeNo) {
+      if (!cardDebugRecord.canonicalEmployeeNo) {
         diagnostics.droppedCards.missingEmployeeNo += 1;
         continue;
       }
 
-      const existingCardNo = cardsByEmployeeNo.get(joinEmployeeNo);
+      const existingCardNo = cardsByEmployeeNo.get(cardDebugRecord.canonicalEmployeeNo);
 
-      if (!existingCardNo || cardNo.localeCompare(existingCardNo) < 0) {
-        cardsByEmployeeNo.set(joinEmployeeNo, cardNo);
+      if (
+        !existingCardNo ||
+        cardDebugRecord.cardNo.localeCompare(existingCardNo) < 0
+      ) {
+        cardsByEmployeeNo.set(
+          cardDebugRecord.canonicalEmployeeNo,
+          cardDebugRecord.cardNo
+        );
+        selectedCardRecordsByJoinEmployeeNo.set(
+          cardDebugRecord.canonicalEmployeeNo,
+          cardDebugRecord
+        );
       }
     }
 
@@ -883,15 +1070,266 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
 
   diagnostics.matchedJoinedSlots = slots.length;
 
+  const cardBackedNonSlotRecords = [];
+
+  for (const [joinEmployeeNo, cardNo] of Array.from(cardsByEmployeeNo.entries()).sort(
+    (left, right) => left[1].localeCompare(right[1]) || left[0].localeCompare(right[0])
+  )) {
+    if (placeholderUsers.has(joinEmployeeNo)) {
+      continue;
+    }
+
+    diagnostics.cardBackedNonSlots.total += 1;
+
+    const cardDebugRecord = selectedCardRecordsByJoinEmployeeNo.get(joinEmployeeNo) ?? null;
+    const userDebugRecord = userDebugRecordsByJoinEmployeeNo.get(joinEmployeeNo) ?? null;
+    const placeholderNameValues = userDebugRecord
+      ? [
+          userDebugRecord.placeholderNameHint,
+          userDebugRecord.extractedName,
+          ...Object.values(userDebugRecord.nameCandidates),
+        ]
+      : [];
+    const forceInclude =
+      hasFocusedPlaceholderMatch(debugConfig, placeholderNameValues) ||
+      isFocusedCardNoMatch(debugConfig, cardNo);
+    const debugMatchedBy = [];
+
+    if (hasFocusedPlaceholderMatch(debugConfig, placeholderNameValues)) {
+      debugMatchedBy.push('focusedPlaceholderName');
+    }
+
+    if (isFocusedCardNoMatch(debugConfig, cardNo)) {
+      debugMatchedBy.push('focusedCardNo');
+    }
+
+    let userClassification = 'missingUserRecord';
+
+    if (!userDebugRecord) {
+      diagnostics.cardBackedNonSlots.missingUserRecord += 1;
+    } else {
+      userClassification = userDebugRecord.classification;
+
+      if (userClassification === 'missingPlaceholderName') {
+        diagnostics.cardBackedNonSlots.missingPlaceholderName += 1;
+      } else if (userClassification === 'nonPlaceholderName') {
+        diagnostics.cardBackedNonSlots.nonPlaceholderName += 1;
+      } else if (userClassification === 'invalidValidity') {
+        recordInvalidValidity(
+          diagnostics.cardBackedNonSlots.invalidValidity,
+          userDebugRecord.validityReason
+        );
+      }
+    }
+
+    cardBackedNonSlotRecords.push({
+      key:
+        userDebugRecord?.placeholderNameHint
+          ? `${cardNo} • ${userDebugRecord.placeholderNameHint}`
+          : cardNo,
+      cardNo,
+      employeeNo: cardDebugRecord?.employeeNo ?? userDebugRecord?.employeeNo ?? null,
+      canonicalEmployeeNo: joinEmployeeNo,
+      placeholderNameHint: userDebugRecord?.placeholderNameHint ?? null,
+      extractedName: userDebugRecord?.extractedName ?? null,
+      nameCandidates: userDebugRecord?.nameCandidates ?? {},
+      matchingPlaceholderNames: userDebugRecord?.matchingPlaceholderNames ?? [],
+      userRecordFound: !!userDebugRecord,
+      userClassification,
+      validityEvaluated: userDebugRecord?.validityEvaluated ?? false,
+      isCurrentlyValid: userDebugRecord?.isCurrentlyValid ?? null,
+      validityReason: userDebugRecord?.validityReason ?? null,
+      normalizedValidity: userDebugRecord?.normalizedValidity ?? null,
+      debugMatchedBy,
+      rawCardInfo: cardDebugRecord?.rawCardInfo ?? null,
+      rawUserInfo: userDebugRecord?.rawUserInfo ?? null,
+      forceInclude,
+    });
+  }
+
   console.info('[hik] listAvailableSlots diagnostics', diagnostics);
 
   if (availableSlotsDebugEnabled) {
-    console.info('[hik] listAvailableSlots dropped placeholder samples', {
-      sampleLimit: AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT,
-      sampledCount: droppedPlaceholderSamples.samples.length,
-      omittedCount: droppedPlaceholderSamples.omittedCount,
-      samples: droppedPlaceholderSamples.samples,
+    const cardBackedJoinEmployeeNos = new Set(cardsByEmployeeNo.keys());
+    const focusedPlaceholderJoinEmployeeNos = new Set(
+      userDebugRecords
+        .filter((record) =>
+          hasFocusedPlaceholderMatch(debugConfig, [
+            record.extractedName,
+            record.placeholderNameHint,
+            ...Object.values(record.nameCandidates),
+          ])
+        )
+        .map((record) => record.canonicalEmployeeNo)
+        .filter(Boolean)
+    );
+    const focusedCardJoinEmployeeNos = new Set(
+      cardDebugRecords
+        .filter((record) => isFocusedCardNoMatch(debugConfig, record.cardNo))
+        .map((record) => record.canonicalEmployeeNo)
+        .filter(Boolean)
+    );
+    const cardBackedNonSlotJoinEmployeeNos = new Set(
+      cardBackedNonSlotRecords.map((record) => record.canonicalEmployeeNo).filter(Boolean)
+    );
+
+    const scannedUserRecordsReport = buildDebugReport({
+      focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+      focusedCardNos: debugConfig.focusedCardNos,
+      records: userDebugRecords
+        .filter((record) => {
+          const isCardBacked =
+            !!record.canonicalEmployeeNo &&
+            cardBackedJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const hasPlaceholderEvidence =
+            record.classification === 'validPlaceholder' ||
+            record.classification === 'invalidValidity' ||
+            record.matchingPlaceholderNames.length > 0;
+          const forceInclude =
+            hasFocusedPlaceholderMatch(debugConfig, [
+              record.extractedName,
+              record.placeholderNameHint,
+              ...Object.values(record.nameCandidates),
+            ]) ||
+            (!!record.canonicalEmployeeNo &&
+              focusedCardJoinEmployeeNos.has(record.canonicalEmployeeNo));
+
+          return isCardBacked || hasPlaceholderEvidence || forceInclude;
+        })
+        .sort((left, right) => {
+          const leftKey =
+            left.placeholderNameHint ??
+            left.extractedName ??
+            left.employeeNo ??
+            left.canonicalEmployeeNo;
+          const rightKey =
+            right.placeholderNameHint ??
+            right.extractedName ??
+            right.employeeNo ??
+            right.canonicalEmployeeNo;
+
+          return leftKey.localeCompare(rightKey);
+        })
+        .map((record) => {
+          const isFocusedPlaceholder = hasFocusedPlaceholderMatch(debugConfig, [
+            record.extractedName,
+            record.placeholderNameHint,
+            ...Object.values(record.nameCandidates),
+          ]);
+          const isFocusedCard =
+            !!record.canonicalEmployeeNo &&
+            focusedCardJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const isCardBacked =
+            !!record.canonicalEmployeeNo &&
+            cardBackedJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const debugMatchedBy = [];
+
+          if (isFocusedPlaceholder) {
+            debugMatchedBy.push('focusedPlaceholderName');
+          }
+
+          if (isFocusedCard) {
+            debugMatchedBy.push('focusedCardNo');
+          }
+
+          if (isCardBacked) {
+            debugMatchedBy.push('cardBackedEmployee');
+          }
+
+          if (record.matchingPlaceholderNames.length > 0) {
+            debugMatchedBy.push('placeholderNameCandidate');
+          }
+
+          return {
+            key:
+              record.placeholderNameHint ??
+              record.extractedName ??
+              record.employeeNo ??
+              '(missing employeeNo)',
+            employeeNo: record.employeeNo || null,
+            canonicalEmployeeNo: record.canonicalEmployeeNo || null,
+            extractedName: record.extractedName || null,
+            placeholderNameHint: record.placeholderNameHint,
+            nameCandidates: record.nameCandidates,
+            matchingPlaceholderNames: record.matchingPlaceholderNames,
+            classification: record.classification,
+            validityEvaluated: record.validityEvaluated,
+            isCurrentlyValid: record.isCurrentlyValid,
+            validityReason: record.validityReason,
+            normalizedValidity: record.normalizedValidity,
+            debugMatchedBy,
+            rawUserInfo: record.rawUserInfo,
+            forceInclude: isFocusedPlaceholder || isFocusedCard,
+          };
+        }),
     });
+    const scannedCardRecordsReport = buildDebugReport({
+      focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+      focusedCardNos: debugConfig.focusedCardNos,
+      records: cardDebugRecords
+        .filter((record) => {
+          const isFocusedCard = isFocusedCardNoMatch(debugConfig, record.cardNo);
+          const isFocusedPlaceholder =
+            !!record.canonicalEmployeeNo &&
+            focusedPlaceholderJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const isCardBackedNonSlot =
+            !!record.canonicalEmployeeNo &&
+            cardBackedNonSlotJoinEmployeeNos.has(record.canonicalEmployeeNo);
+
+          return isFocusedCard || isFocusedPlaceholder || isCardBackedNonSlot;
+        })
+        .sort((left, right) => left.cardNo.localeCompare(right.cardNo))
+        .map((record) => {
+          const isFocusedCard = isFocusedCardNoMatch(debugConfig, record.cardNo);
+          const isFocusedPlaceholder =
+            !!record.canonicalEmployeeNo &&
+            focusedPlaceholderJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const isCardBackedNonSlot =
+            !!record.canonicalEmployeeNo &&
+            cardBackedNonSlotJoinEmployeeNos.has(record.canonicalEmployeeNo);
+          const debugMatchedBy = [];
+
+          if (isFocusedCard) {
+            debugMatchedBy.push('focusedCardNo');
+          }
+
+          if (isFocusedPlaceholder) {
+            debugMatchedBy.push('focusedPlaceholderName');
+          }
+
+          if (isCardBackedNonSlot) {
+            debugMatchedBy.push('cardBackedNonSlot');
+          }
+
+          return {
+            key: record.cardNo,
+            cardNo: record.cardNo,
+            employeeNo: record.employeeNo || null,
+            canonicalEmployeeNo: record.canonicalEmployeeNo || null,
+            debugMatchedBy,
+            rawCardInfo: record.rawCardInfo,
+            forceInclude: isFocusedCard || isFocusedPlaceholder,
+          };
+        }),
+    });
+    const cardBackedNonSlotsReport = buildDebugReport({
+      focusedPlaceholderNames: debugConfig.focusedPlaceholderNames,
+      focusedCardNos: debugConfig.focusedCardNos,
+      records: cardBackedNonSlotRecords,
+    });
+
+    logDebugJson(
+      '[hik] listAvailableSlots scanned user records',
+      scannedUserRecordsReport
+    );
+    logDebugJson(
+      '[hik] listAvailableSlots scanned card records',
+      scannedCardRecordsReport
+    );
+    logDebugJson(
+      '[hik] listAvailableSlots card-backed non-slots',
+      cardBackedNonSlotsReport
+    );
   }
 
   return {

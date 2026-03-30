@@ -45,13 +45,16 @@ HIK_USERNAME=Admin
 HIK_PASSWORD=your_device_password
 HIK_REMOTE_PASSWORD=123456
 HIK_DEBUG_AVAILABLE_SLOTS=0
+HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=
+HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
 `HIK_REMOTE_PASSWORD` must match the 6-digit remote door password configured on the device in iVMS-4200 / access control settings. The bridge needs that extra credential specifically for `unlock_door`.
-Set `HIK_DEBUG_AVAILABLE_SLOTS=1` temporarily when you need extra `list_available_slots` diagnostics in the laptop logs. That debug mode keeps the job result shape unchanged, but logs bounded samples of placeholder-looking users that were excluded by validity parsing.
+Set `HIK_DEBUG_AVAILABLE_SLOTS=1` temporarily when you need extra `list_available_slots` diagnostics in the laptop logs. That debug mode keeps the job result shape unchanged, but logs bounded pretty-JSON reports for scanned users, scanned cards, and card-backed non-slots.
+Use `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS` when you need to force specific slot labels or card numbers into the debug output, for example `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=P55` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=0105451261`.
 
 ### 4. Run the service
 ```bash

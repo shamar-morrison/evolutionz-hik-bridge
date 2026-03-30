@@ -282,6 +282,8 @@ async function loadHikModule(port, envOverrides = {}) {
   process.env.HIK_PASSWORD = DIGEST_PASSWORD;
   process.env.HIK_DEBUG_AUTH = '0';
   process.env.HIK_DEBUG_AVAILABLE_SLOTS = '0';
+  process.env.HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES = '';
+  process.env.HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS = '';
   process.env.HIK_REMOTE_PASSWORD = '123456';
 
   for (const [key, value] of Object.entries(envOverrides)) {
@@ -299,6 +301,22 @@ async function loadHikModule(port, envOverrides = {}) {
   );
 
   return import(moduleUrl.href);
+}
+
+function findJsonLog(infoCalls, label) {
+  const entry = infoCalls.find(
+    ([message]) => typeof message === 'string' && message.startsWith(`${label}\n`)
+  );
+
+  assert.ok(entry, `Expected log entry for "${label}"`);
+
+  return JSON.parse(entry[0].slice(label.length + 1));
+}
+
+function hasJsonLog(infoCalls, label) {
+  return infoCalls.some(
+    ([message]) => typeof message === 'string' && message.startsWith(`${label}\n`)
+  );
 }
 
 test('digest-fetch reuses auth state on a shared client under overlapping requests', async () => {
@@ -788,6 +806,22 @@ test('listAvailableSlots paginates fully, canonicalizes employee numbers, and fi
         droppedSlots: {
           withoutCard: 0,
         },
+        cardBackedNonSlots: {
+          total: 1,
+          missingUserRecord: 0,
+          missingPlaceholderName: 0,
+          nonPlaceholderName: 1,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
       },
     });
   } finally {
@@ -795,7 +829,7 @@ test('listAvailableSlots paginates fully, canonicalizes employee numbers, and fi
   }
 });
 
-test('listAvailableSlots records granular validity diagnostics and debug samples when enabled', async () => {
+test('listAvailableSlots records granular validity diagnostics and JSON debug reports when enabled', async () => {
   const device = createAuthorizedApiServer(({ req, res, body }) => {
     const payload = JSON.parse(body);
 
@@ -960,52 +994,560 @@ test('listAvailableSlots records granular validity diagnostics and debug samples
         droppedSlots: {
           withoutCard: 0,
         },
+        cardBackedNonSlots: {
+          total: 0,
+          missingUserRecord: 0,
+          missingPlaceholderName: 0,
+          nonPlaceholderName: 0,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
       },
     });
-
-    const debugCall = infoCalls.find(
-      ([label]) => label === '[hik] listAvailableSlots dropped placeholder samples'
+    const userReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots scanned user records'
+    );
+    const cardReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots scanned card records'
+    );
+    const nonSlotReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots card-backed non-slots'
     );
 
-    assert.ok(debugCall);
-    assert.equal(debugCall[1].sampleLimit, 10);
-    assert.equal(debugCall[1].sampledCount, 7);
-    assert.equal(debugCall[1].omittedCount, 0);
+    assert.equal(userReport.sampleLimit, 10);
+    assert.equal(userReport.totalRelevantRecords, 8);
+    assert.equal(userReport.omittedCount, 0);
     assert.deepEqual(
-      debugCall[1].samples.map((sample) => ({
-        reason: sample.reason,
-        employeeNo: sample.employeeNo,
-        name: sample.name,
+      userReport.records.map((record) => ({
+        extractedName: record.extractedName,
+        classification: record.classification,
+        validityReason: record.validityReason,
       })),
       [
-        { reason: 'missingValid', employeeNo: '00000700', name: 'P70' },
-        { reason: 'disabled', employeeNo: '00000701', name: 'P71' },
-        { reason: 'invalidBeginTime', employeeNo: '00000702', name: 'P72' },
-        { reason: 'futureBeginTime', employeeNo: '00000703', name: 'P73' },
-        { reason: 'missingEndTime', employeeNo: '00000704', name: 'P74' },
-        { reason: 'invalidEndTime', employeeNo: '00000705', name: 'P75' },
-        { reason: 'expiredEndTime', employeeNo: '00000706', name: 'P76' },
+        {
+          extractedName: 'P70',
+          classification: 'invalidValidity',
+          validityReason: 'missingValid',
+        },
+        {
+          extractedName: 'P71',
+          classification: 'invalidValidity',
+          validityReason: 'disabled',
+        },
+        {
+          extractedName: 'P72',
+          classification: 'invalidValidity',
+          validityReason: 'invalidBeginTime',
+        },
+        {
+          extractedName: 'P73',
+          classification: 'invalidValidity',
+          validityReason: 'futureBeginTime',
+        },
+        {
+          extractedName: 'P74',
+          classification: 'invalidValidity',
+          validityReason: 'missingEndTime',
+        },
+        {
+          extractedName: 'P75',
+          classification: 'invalidValidity',
+          validityReason: 'invalidEndTime',
+        },
+        {
+          extractedName: 'P76',
+          classification: 'invalidValidity',
+          validityReason: 'expiredEndTime',
+        },
+        {
+          extractedName: 'P77',
+          classification: 'validPlaceholder',
+          validityReason: null,
+        },
       ]
     );
 
-    const missingValidSample = debugCall[1].samples[0];
-    assert.equal(missingValidSample.rawValid, null);
+    const missingValidSample = userReport.records[0];
+    assert.equal(missingValidSample.rawUserInfo.Valid, undefined);
     assert.equal(missingValidSample.normalizedValidity.hasValidObject, false);
     assert.equal(missingValidSample.normalizedValidity.enableRaw, null);
     assert.equal(missingValidSample.normalizedValidity.enable, false);
 
-    const invalidEndTimeSample = debugCall[1].samples[5];
-    assert.equal(invalidEndTimeSample.rawValid.endTime, 'not-a-date');
+    const invalidEndTimeSample = userReport.records[5];
+    assert.equal(invalidEndTimeSample.rawUserInfo.Valid.endTime, 'not-a-date');
     assert.equal(invalidEndTimeSample.normalizedValidity.endTime, 'not-a-date');
     assert.equal(invalidEndTimeSample.normalizedValidity.endTimestamp, null);
     assert.equal(typeof invalidEndTimeSample.normalizedValidity.nowTimestamp, 'number');
+
+    assert.equal(cardReport.totalRelevantRecords, 0);
+    assert.deepEqual(cardReport.records, []);
+    assert.equal(nonSlotReport.totalRelevantRecords, 0);
+    assert.deepEqual(nonSlotReport.records, []);
   } finally {
     console.info = originalInfo;
     await device.close();
   }
 });
 
-test('listAvailableSlots suppresses dropped placeholder debug samples when debug flag is unset', async () => {
+test('listAvailableSlots reports card-backed non-slots by card number and captures name-like fields', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            UserInfo: [
+              {
+                employeeNo: '00000624',
+                name: 'Front Desk',
+                displayName: 'P55',
+                aliasName: 'P55',
+              },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            CardInfo: [
+              { employeeNo: '624', cardNo: '0105451261' },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    const result = await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.deepEqual(result, {
+      slots: [],
+      diagnostics: {
+        userPages: 1,
+        cardPages: 1,
+        totalUsersScanned: 1,
+        totalCardsScanned: 1,
+        matchedPlaceholderUsers: 0,
+        matchedJoinedSlots: 0,
+        droppedUsers: {
+          missingEmployeeNo: 0,
+          missingPlaceholderName: 0,
+          nonPlaceholderName: 1,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
+        droppedCards: {
+          missingEmployeeNo: 0,
+          missingCardNo: 0,
+        },
+        droppedSlots: {
+          withoutCard: 0,
+        },
+        cardBackedNonSlots: {
+          total: 1,
+          missingUserRecord: 0,
+          missingPlaceholderName: 0,
+          nonPlaceholderName: 1,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
+      },
+    });
+
+    const userReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots scanned user records'
+    );
+    const cardReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots scanned card records'
+    );
+    const nonSlotReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots card-backed non-slots'
+    );
+
+    assert.deepEqual(userReport.records[0].nameCandidates, {
+      name: 'Front Desk',
+      displayName: 'P55',
+      aliasName: 'P55',
+    });
+    assert.deepEqual(userReport.records[0].matchingPlaceholderNames, [
+      {
+        key: 'displayName',
+        value: 'P55',
+      },
+    ]);
+    assert.equal(userReport.records[0].classification, 'nonPlaceholderName');
+
+    assert.deepEqual(cardReport.records, [
+      {
+        key: '0105451261',
+        cardNo: '0105451261',
+        employeeNo: '624',
+        canonicalEmployeeNo: '624',
+        debugMatchedBy: ['cardBackedNonSlot'],
+        rawCardInfo: {
+          employeeNo: '624',
+          cardNo: '0105451261',
+        },
+      },
+    ]);
+
+    assert.deepEqual(nonSlotReport.records, [
+      {
+        key: '0105451261 • P55',
+        cardNo: '0105451261',
+        employeeNo: '624',
+        canonicalEmployeeNo: '624',
+        placeholderNameHint: 'P55',
+        extractedName: 'Front Desk',
+        nameCandidates: {
+          name: 'Front Desk',
+          displayName: 'P55',
+          aliasName: 'P55',
+        },
+        matchingPlaceholderNames: [
+          {
+            key: 'displayName',
+            value: 'P55',
+          },
+        ],
+        userRecordFound: true,
+        userClassification: 'nonPlaceholderName',
+        validityEvaluated: false,
+        isCurrentlyValid: null,
+        validityReason: null,
+        normalizedValidity: null,
+        debugMatchedBy: [],
+        rawCardInfo: {
+          employeeNo: '624',
+          cardNo: '0105451261',
+        },
+        rawUserInfo: {
+          employeeNo: '00000624',
+          name: 'Front Desk',
+          displayName: 'P55',
+          aliasName: 'P55',
+        },
+      },
+    ]);
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots reports missing user records for card-backed non-slots', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 0,
+            totalMatches: 0,
+            UserInfo: [],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 1,
+            totalMatches: 1,
+            CardInfo: [
+              { employeeNo: '902', cardNo: '0109999999' },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    const result = await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.equal(result.diagnostics.cardBackedNonSlots.total, 1);
+    assert.equal(result.diagnostics.cardBackedNonSlots.missingUserRecord, 1);
+
+    const nonSlotReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots card-backed non-slots'
+    );
+
+    assert.deepEqual(nonSlotReport.records, [
+      {
+        key: '0109999999',
+        cardNo: '0109999999',
+        employeeNo: '902',
+        canonicalEmployeeNo: '902',
+        placeholderNameHint: null,
+        extractedName: null,
+        nameCandidates: {},
+        matchingPlaceholderNames: [],
+        userRecordFound: false,
+        userClassification: 'missingUserRecord',
+        validityEvaluated: false,
+        isCurrentlyValid: null,
+        validityReason: null,
+        normalizedValidity: null,
+        debugMatchedBy: [],
+        rawCardInfo: {
+          employeeNo: '902',
+          cardNo: '0109999999',
+        },
+        rawUserInfo: null,
+      },
+    ]);
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots focused placeholder and card filters override generic debug sample limits', async () => {
+  const userInfo = Array.from({ length: 12 }, (_, index) => {
+    const employeeNo = `000009${String(index).padStart(2, '0')}`;
+
+    if (index === 11) {
+      return {
+        employeeNo,
+        name: 'Member 99',
+        displayName: 'P99',
+      };
+    }
+
+    return {
+      employeeNo,
+      name: `Member ${String(index).padStart(2, '0')}`,
+      displayName: `Guest ${String(index).padStart(2, '0')}`,
+    };
+  });
+  const cardInfo = Array.from({ length: 12 }, (_, index) => ({
+    employeeNo: String(900 + index),
+    cardNo:
+      index === 11 ? '9999999999' : `01000000${String(index).padStart(2, '0')}`,
+  }));
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 12,
+            totalMatches: 12,
+            UserInfo: userInfo,
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 12,
+            totalMatches: 12,
+            CardInfo: cardInfo,
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port, {
+    HIK_DEBUG_AVAILABLE_SLOTS: '1',
+    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P99',
+    HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS: '9999999999',
+  });
+  const originalInfo = console.info;
+  const infoCalls = [];
+
+  console.info = (...args) => {
+    infoCalls.push(args);
+  };
+
+  try {
+    await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    const cardReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots scanned card records'
+    );
+    const nonSlotReport = findJsonLog(
+      infoCalls,
+      '[hik] listAvailableSlots card-backed non-slots'
+    );
+
+    assert.equal(cardReport.sampleLimit, 10);
+    assert.equal(cardReport.totalRelevantRecords, 12);
+    assert.equal(cardReport.omittedCount, 1);
+    assert.equal(
+      cardReport.records.some((record) => record.cardNo === '9999999999'),
+      true
+    );
+
+    assert.equal(nonSlotReport.sampleLimit, 10);
+    assert.equal(nonSlotReport.totalRelevantRecords, 12);
+    assert.equal(nonSlotReport.omittedCount, 1);
+    assert.deepEqual(
+      nonSlotReport.records.find((record) => record.cardNo === '9999999999'),
+      {
+        key: '9999999999 • P99',
+        cardNo: '9999999999',
+        employeeNo: '911',
+        canonicalEmployeeNo: '911',
+        placeholderNameHint: 'P99',
+        extractedName: 'Member 99',
+        nameCandidates: {
+          name: 'Member 99',
+          displayName: 'P99',
+        },
+        matchingPlaceholderNames: [
+          {
+            key: 'displayName',
+            value: 'P99',
+          },
+        ],
+        userRecordFound: true,
+        userClassification: 'nonPlaceholderName',
+        validityEvaluated: false,
+        isCurrentlyValid: null,
+        validityReason: null,
+        normalizedValidity: null,
+        debugMatchedBy: ['focusedPlaceholderName', 'focusedCardNo'],
+        rawCardInfo: {
+          employeeNo: '911',
+          cardNo: '9999999999',
+        },
+        rawUserInfo: {
+          employeeNo: '00000911',
+          name: 'Member 99',
+          displayName: 'P99',
+        },
+      }
+    );
+  } finally {
+    console.info = originalInfo;
+    await device.close();
+  }
+});
+
+test('listAvailableSlots suppresses JSON debug reports when debug flag is unset', async () => {
   const device = createAuthorizedApiServer(({ req, res, body }) => {
     const payload = JSON.parse(body);
 
@@ -1092,16 +1634,10 @@ test('listAvailableSlots suppresses dropped placeholder debug samples when debug
         placeholderName: 'P81',
       },
     ]);
-    assert.equal(
-      infoCalls.some(
-        ([label]) => label === '[hik] listAvailableSlots dropped placeholder samples'
-      ),
-      false
-    );
-    assert.equal(
-      infoCalls.some(([label]) => label === '[hik] listAvailableSlots diagnostics'),
-      true
-    );
+    assert.equal(hasJsonLog(infoCalls, '[hik] listAvailableSlots scanned user records'), false);
+    assert.equal(hasJsonLog(infoCalls, '[hik] listAvailableSlots scanned card records'), false);
+    assert.equal(hasJsonLog(infoCalls, '[hik] listAvailableSlots card-backed non-slots'), false);
+    assert.equal(infoCalls.some(([label]) => label === '[hik] listAvailableSlots diagnostics'), true);
   } finally {
     console.info = originalInfo;
     await device.close();
