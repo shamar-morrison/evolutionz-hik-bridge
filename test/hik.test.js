@@ -590,7 +590,7 @@ test('listAvailableCards paginates card search and returns only unassigned cards
   }
 });
 
-test('listAvailableSlots joins valid placeholder users to their card numbers', async () => {
+test('listAvailableSlots paginates fully, canonicalizes employee numbers, and filters to reusable Hik slots', async () => {
   const device = createAuthorizedApiServer(({ req, res, body }) => {
     const payload = JSON.parse(body);
 
@@ -603,33 +603,88 @@ test('listAvailableSlots joins valid placeholder users to their card numbers', a
         res.end(JSON.stringify({
           UserInfoSearch: {
             responseStatusStrg: 'OK',
-            numOfMatches: 5,
-            totalMatches: 5,
+            numOfMatches: 2,
+            totalMatches: 6,
             UserInfo: [
               {
-                employeeNo: '00000611',
-                name: 'P42',
-                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+                employeeNo: '33',
+                name: 'B13',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
               },
               {
-                employeeNo: '00000612',
-                name: 'P43',
-                Valid: { enable: false },
+                employeeNo: '00000624',
+                name: 'P55',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+
+      if (position === 2) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'MORE',
+            numOfMatches: 2,
+            totalMatches: 6,
+            UserInfo: [
+              {
+                employeeNo: '00000625',
+                name: 'P56',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
               },
               {
                 employeeNo: '00000608',
                 name: 'P39 Shanelle Ragbar',
-                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+
+      if (position === 4) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 2,
+            totalMatches: 6,
+            UserInfo: [
+              {
+                employeeNo: '00000626',
+                name: 'P57',
+                Valid: {
+                  enable: false,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
               },
               {
-                employeeNo: '00000618',
-                name: 'P49',
-                Valid: { enable: true, endTime: '2020-01-01T00:00:00' },
-              },
-              {
-                employeeNo: '00000613',
-                name: 'X7',
-                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+                employeeNo: '00000627',
+                name: 'P58',
+                Valid: {
+                  enable: true,
+                  beginTime: '2030-01-01T00:00:00',
+                  endTime: '2031-12-31T23:59:59',
+                },
               },
             ],
           },
@@ -647,13 +702,26 @@ test('listAvailableSlots joins valid placeholder users to their card numbers', a
         res.end(JSON.stringify({
           CardInfoSearch: {
             responseStatusStrg: 'OK',
-            numOfMatches: 4,
+            numOfMatches: 2,
             totalMatches: 4,
             CardInfo: [
-              { employeeNo: '00000611', cardNo: '0102857149' },
-              { employeeNo: '00000612', cardNo: '0104620061' },
-              { employeeNo: '00000608', cardNo: '0104615005' },
-              { employeeNo: '00000699', cardNo: '0100000000' },
+              { employeeNo: '00033', cardNo: '3581684316' },
+              { employeeNo: '624', cardNo: '0105451261' },
+            ],
+          },
+        }));
+        return;
+      }
+
+      if (position === 2) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 2,
+            totalMatches: 4,
+            CardInfo: [
+              { employeeNo: '625', cardNo: '0105747453' },
+              { employeeNo: '608', cardNo: '0104615005' },
             ],
           },
         }));
@@ -675,16 +743,42 @@ test('listAvailableSlots joins valid placeholder users to their card numbers', a
     assert.deepEqual(result, {
       slots: [
         {
-          employeeNo: '00000611',
-          cardNo: '0102857149',
-          placeholderName: 'P42',
+          employeeNo: '33',
+          cardNo: '3581684316',
+          placeholderName: 'B13',
         },
         {
-          employeeNo: '00000612',
-          cardNo: '0104620061',
-          placeholderName: 'P43',
+          employeeNo: '00000624',
+          cardNo: '0105451261',
+          placeholderName: 'P55',
+        },
+        {
+          employeeNo: '00000625',
+          cardNo: '0105747453',
+          placeholderName: 'P56',
         },
       ],
+      diagnostics: {
+        userPages: 3,
+        cardPages: 2,
+        totalUsersScanned: 6,
+        totalCardsScanned: 4,
+        matchedPlaceholderUsers: 3,
+        matchedJoinedSlots: 3,
+        droppedUsers: {
+          missingEmployeeNo: 0,
+          missingPlaceholderName: 0,
+          nonPlaceholderName: 1,
+          invalidValidity: 2,
+        },
+        droppedCards: {
+          missingEmployeeNo: 0,
+          missingCardNo: 0,
+        },
+        droppedSlots: {
+          withoutCard: 0,
+        },
+      },
     });
   } finally {
     await device.close();

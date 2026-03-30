@@ -194,30 +194,72 @@ function isCurrentlyValid(userInfo, now = new Date()) {
   const valid = userInfo?.Valid;
 
   if (!valid || typeof valid !== 'object') {
-    return true;
+    return false;
   }
 
-  if (valid.enable === undefined) {
-    return true;
+  if (!toBoolean(valid.enable, false)) {
+    return false;
   }
 
-  if (!toBoolean(valid.enable, true)) {
-    return true;
-  }
-
+  const beginTime = typeof valid.beginTime === 'string' ? valid.beginTime.trim() : '';
   const endTime = typeof valid.endTime === 'string' ? valid.endTime.trim() : '';
 
+  if (beginTime) {
+    const beginTimestamp = Date.parse(beginTime);
+
+    if (Number.isNaN(beginTimestamp) || beginTimestamp > now.getTime()) {
+      return false;
+    }
+  }
+
   if (!endTime) {
-    return true;
+    return false;
   }
 
   const endTimestamp = Date.parse(endTime);
-
   if (Number.isNaN(endTimestamp)) {
-    return true;
+    return false;
   }
 
   return endTimestamp >= now.getTime();
+}
+
+function canonicalizeEmployeeNo(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const normalized = trimmed.replace(/^0+/, '');
+  return normalized || '0';
+}
+
+function shouldContinuePagedSearch({
+  responseStatus,
+  searchResultPosition,
+  matchesOnPage,
+  totalMatches,
+}) {
+  if (matchesOnPage <= 0) {
+    return false;
+  }
+
+  const normalizedStatus = String(responseStatus ?? 'OK').toUpperCase();
+
+  if (normalizedStatus === 'MORE') {
+    return true;
+  }
+
+  return searchResultPosition + matchesOnPage < totalMatches;
 }
 
 function normalizeResponseStatus(parsedXml) {
@@ -523,6 +565,27 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
   const cardSearchID = `evolutionz-cards-${Date.now()}`;
   const placeholderUsers = new Map();
   const cardsByEmployeeNo = new Map();
+  const diagnostics = {
+    userPages: 0,
+    cardPages: 0,
+    totalUsersScanned: 0,
+    totalCardsScanned: 0,
+    matchedPlaceholderUsers: 0,
+    matchedJoinedSlots: 0,
+    droppedUsers: {
+      missingEmployeeNo: 0,
+      missingPlaceholderName: 0,
+      nonPlaceholderName: 0,
+      invalidValidity: 0,
+    },
+    droppedCards: {
+      missingEmployeeNo: 0,
+      missingCardNo: 0,
+    },
+    droppedSlots: {
+      withoutCard: 0,
+    },
+  };
   let userSearchResultPosition = 0;
   let cardSearchResultPosition = 0;
 
@@ -539,34 +602,66 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     }
 
     const userInfoList = normalizeUserInfoList(userInfoSearch.UserInfo);
+    diagnostics.userPages += 1;
+    diagnostics.totalUsersScanned += userInfoList.length;
 
     for (const userInfo of userInfoList) {
       const employeeNo = typeof userInfo?.employeeNo === 'string' ? userInfo.employeeNo.trim() : '';
       const placeholderName = typeof userInfo?.name === 'string' ? userInfo.name.trim() : '';
 
       if (!employeeNo || !placeholderName) {
+        if (!employeeNo) {
+          diagnostics.droppedUsers.missingEmployeeNo += 1;
+        }
+
+        if (!placeholderName) {
+          diagnostics.droppedUsers.missingPlaceholderName += 1;
+        }
+
         continue;
       }
 
-      if (!placeholderPattern.test(placeholderName) || !isCurrentlyValid(userInfo, now)) {
+      if (!placeholderPattern.test(placeholderName)) {
+        diagnostics.droppedUsers.nonPlaceholderName += 1;
         continue;
       }
 
-      placeholderUsers.set(employeeNo, {
+      if (!isCurrentlyValid(userInfo, now)) {
+        diagnostics.droppedUsers.invalidValidity += 1;
+        continue;
+      }
+
+      const joinEmployeeNo = canonicalizeEmployeeNo(employeeNo);
+
+      if (!joinEmployeeNo) {
+        diagnostics.droppedUsers.missingEmployeeNo += 1;
+        continue;
+      }
+
+      placeholderUsers.set(joinEmployeeNo, {
         employeeNo,
+        joinEmployeeNo,
         placeholderName,
       });
     }
 
     const responseStatus = String(userInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
     const matchesOnPage = getNumericField(userInfoSearch.numOfMatches, userInfoList.length);
+    const totalMatches = getNumericField(userInfoSearch.totalMatches, userSearchResultPosition + matchesOnPage);
 
-    if (responseStatus !== 'MORE' || matchesOnPage <= 0) {
+    if (!shouldContinuePagedSearch({
+      responseStatus,
+      searchResultPosition: userSearchResultPosition,
+      matchesOnPage,
+      totalMatches,
+    })) {
       break;
     }
 
     userSearchResultPosition += matchesOnPage;
   }
+
+  diagnostics.matchedPlaceholderUsers = placeholderUsers.size;
 
   while (true) {
     const response = await searchCards({
@@ -581,26 +676,49 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     }
 
     const cardInfoList = normalizeCardInfoList(cardInfoSearch.CardInfo);
+    diagnostics.cardPages += 1;
+    diagnostics.totalCardsScanned += cardInfoList.length;
 
     for (const cardInfo of cardInfoList) {
       const employeeNo = typeof cardInfo?.employeeNo === 'string' ? cardInfo.employeeNo.trim() : '';
       const cardNo = typeof cardInfo?.cardNo === 'string' ? cardInfo.cardNo.trim() : '';
 
       if (!employeeNo || !cardNo) {
+        if (!employeeNo) {
+          diagnostics.droppedCards.missingEmployeeNo += 1;
+        }
+
+        if (!cardNo) {
+          diagnostics.droppedCards.missingCardNo += 1;
+        }
+
         continue;
       }
 
-      const existingCardNo = cardsByEmployeeNo.get(employeeNo);
+      const joinEmployeeNo = canonicalizeEmployeeNo(employeeNo);
+
+      if (!joinEmployeeNo) {
+        diagnostics.droppedCards.missingEmployeeNo += 1;
+        continue;
+      }
+
+      const existingCardNo = cardsByEmployeeNo.get(joinEmployeeNo);
 
       if (!existingCardNo || cardNo.localeCompare(existingCardNo) < 0) {
-        cardsByEmployeeNo.set(employeeNo, cardNo);
+        cardsByEmployeeNo.set(joinEmployeeNo, cardNo);
       }
     }
 
     const responseStatus = String(cardInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
     const matchesOnPage = getNumericField(cardInfoSearch.numOfMatches, cardInfoList.length);
+    const totalMatches = getNumericField(cardInfoSearch.totalMatches, cardSearchResultPosition + matchesOnPage);
 
-    if (responseStatus !== 'MORE' || matchesOnPage <= 0) {
+    if (!shouldContinuePagedSearch({
+      responseStatus,
+      searchResultPosition: cardSearchResultPosition,
+      matchesOnPage,
+      totalMatches,
+    })) {
       break;
     }
 
@@ -609,9 +727,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
 
   const slots = Array.from(placeholderUsers.values())
     .map((user) => {
-      const cardNo = cardsByEmployeeNo.get(user.employeeNo);
+      const cardNo = cardsByEmployeeNo.get(user.joinEmployeeNo);
 
       if (!cardNo) {
+        diagnostics.droppedSlots.withoutCard += 1;
         return null;
       }
 
@@ -627,7 +746,14 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
       left.cardNo.localeCompare(right.cardNo)
     );
 
-  return { slots };
+  diagnostics.matchedJoinedSlots = slots.length;
+
+  console.info('[hik] listAvailableSlots diagnostics', diagnostics);
+
+  return {
+    slots,
+    diagnostics,
+  };
 }
 
 export async function resetSlot({ employeeNo, placeholderName, now = new Date() }) {
