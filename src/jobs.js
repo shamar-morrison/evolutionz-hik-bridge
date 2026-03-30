@@ -16,6 +16,8 @@ import * as hik from './hik.js';
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { employeeNo }
  *   list_available_cards - payload: {}
+ *   list_available_slots - payload: {}
+ *   reset_slot    - payload: { employeeNo, placeholderName }
  */
 export async function processJob(job, hikApi = hik) {
   const { type, payload } = job;
@@ -66,6 +68,19 @@ export async function processJob(job, hikApi = hik) {
 
     case 'list_available_cards': {
       const result = await hikApi.listAvailableCards();
+      return { success: true, result };
+    }
+
+    case 'list_available_slots': {
+      const result = await hikApi.listAvailableSlots();
+      return { success: true, result };
+    }
+
+    case 'reset_slot': {
+      const result = await hikApi.resetSlot({
+        employeeNo: payload.employeeNo,
+        placeholderName: payload.placeholderName,
+      });
       return { success: true, result };
     }
 

@@ -45,3 +45,52 @@ test('processJob dispatches list_available_cards jobs', async () => {
     },
   });
 });
+
+test('processJob dispatches list_available_slots jobs', async () => {
+  const hikApi = {
+    listAvailableSlots: async () => ({
+      slots: [{ employeeNo: '00000611', cardNo: '0102857149', placeholderName: 'P42' }],
+    }),
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-slots',
+      type: 'list_available_slots',
+      payload: {},
+    },
+    hikApi
+  );
+
+  assert.deepEqual(result, {
+    success: true,
+    result: {
+      slots: [{ employeeNo: '00000611', cardNo: '0102857149', placeholderName: 'P42' }],
+    },
+  });
+});
+
+test('processJob dispatches reset_slot jobs', async () => {
+  const calls = [];
+  const hikApi = {
+    resetSlot: async (payload) => {
+      calls.push(payload);
+      return { ok: true };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-reset',
+      type: 'reset_slot',
+      payload: { employeeNo: '00000611', placeholderName: 'P42' },
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [{ employeeNo: '00000611', placeholderName: 'P42' }]);
+  assert.deepEqual(result, {
+    success: true,
+    result: { ok: true },
+  });
+});

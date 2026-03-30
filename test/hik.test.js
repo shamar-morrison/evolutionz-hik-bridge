@@ -447,7 +447,7 @@ test('unlockDoor error mentions the endpoint when the final 401 has no digest ch
   }
 });
 
-test('addUser uses PUT UserInfo/SetUp with the expected payload', async () => {
+test('addUser uses PUT UserInfo/Modify with the expected payload', async () => {
   const device = createAuthorizedApiServer(({ res }) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -468,7 +468,7 @@ test('addUser uses PUT UserInfo/SetUp with the expected payload', async () => {
     const payload = JSON.parse(request.body);
 
     assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: 'EVZ-20260330141516-ABC123',
@@ -590,6 +590,147 @@ test('listAvailableCards paginates card search and returns only unassigned cards
   }
 });
 
+test('listAvailableSlots joins valid placeholder users to their card numbers', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 5,
+            totalMatches: 5,
+            UserInfo: [
+              {
+                employeeNo: '00000611',
+                name: 'P42',
+                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+              },
+              {
+                employeeNo: '00000612',
+                name: 'P43',
+                Valid: { enable: false },
+              },
+              {
+                employeeNo: '00000608',
+                name: 'P39 Shanelle Ragbar',
+                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+              },
+              {
+                employeeNo: '00000618',
+                name: 'P49',
+                Valid: { enable: true, endTime: '2020-01-01T00:00:00' },
+              },
+              {
+                employeeNo: '00000613',
+                name: 'X7',
+                Valid: { enable: true, endTime: '2030-12-31T23:59:59' },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 4,
+            totalMatches: 4,
+            CardInfo: [
+              { employeeNo: '00000611', cardNo: '0102857149' },
+              { employeeNo: '00000612', cardNo: '0104620061' },
+              { employeeNo: '00000608', cardNo: '0104615005' },
+              { employeeNo: '00000699', cardNo: '0100000000' },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.deepEqual(result, {
+      slots: [
+        {
+          employeeNo: '00000611',
+          cardNo: '0102857149',
+          placeholderName: 'P42',
+        },
+        {
+          employeeNo: '00000612',
+          cardNo: '0104620061',
+          placeholderName: 'P43',
+        },
+      ],
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('resetSlot restores the placeholder name with the configured far-future expiry', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.resetSlot({
+      employeeNo: '00000611',
+      placeholderName: 'P42',
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'PUT');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.deepEqual(payload, {
+      UserInfo: {
+        employeeNo: '00000611',
+        name: 'P42',
+        userType: 'normal',
+        Valid: {
+          enable: true,
+          beginTime: '2026-03-30T00:00:00',
+          endTime: '2037-12-31T23:59:59',
+        },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
 test('non-2xx Hik responses include method and endpoint details', async () => {
   const device = createAuthorizedApiServer(({ res }) => {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -610,7 +751,7 @@ test('non-2xx Hik responses include method and endpoint details', async () => {
         beginTime: '2026-03-30T00:00:00',
         endTime: '2026-07-15T23:59:59',
       }),
-      /Device returned 400 for PUT \/ISAPI\/AccessControl\/UserInfo\/SetUp\?format=json:/
+      /Device returned 400 for PUT \/ISAPI\/AccessControl\/UserInfo\/Modify\?format=json:/
     );
   } finally {
     await device.close();

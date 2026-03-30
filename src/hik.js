@@ -8,7 +8,9 @@ const BASE_URL = `http://${process.env.HIK_IP}:${process.env.HIK_PORT}`;
 const DIGEST_RETRY_ATTEMPTS = 2;
 const AUTH_DEBUG_ENABLED = process.env.HIK_DEBUG_AUTH === '1';
 const REMOTE_CONTROL_PASSWORD_PATTERN = /^\d{6}$/;
-const CARD_SEARCH_PAGE_SIZE = 30;
+const SEARCH_PAGE_SIZE = 30;
+const DEFAULT_PLACEHOLDER_SLOT_PATTERN = '^[A-Z]\\d{2}$';
+const DEFAULT_RESET_SLOT_END_TIME = '2037-12-31T23:59:59';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +133,93 @@ function toNumberIfNumeric(value) {
   return Number(trimmed);
 }
 
+function toBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === 'true' || normalized === '1') {
+      return true;
+    }
+
+    if (normalized === 'false' || normalized === '0') {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeList(value) {
+  if (!value) {
+    return [];
+  }
+
+  return Array.isArray(value) ? value : [value];
+}
+
+function pad(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatDatePart(date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function getPlaceholderSlotPattern() {
+  const rawPattern = process.env.HIK_PLACEHOLDER_SLOT_PATTERN?.trim();
+
+  if (!rawPattern) {
+    return new RegExp(DEFAULT_PLACEHOLDER_SLOT_PATTERN);
+  }
+
+  try {
+    return new RegExp(rawPattern);
+  } catch {
+    console.warn(
+      `[hik] Invalid HIK_PLACEHOLDER_SLOT_PATTERN="${rawPattern}". Falling back to ${DEFAULT_PLACEHOLDER_SLOT_PATTERN}.`
+    );
+    return new RegExp(DEFAULT_PLACEHOLDER_SLOT_PATTERN);
+  }
+}
+
+function getResetSlotEndTime() {
+  return process.env.HIK_RESET_SLOT_END_TIME?.trim() || DEFAULT_RESET_SLOT_END_TIME;
+}
+
+function isCurrentlyValid(userInfo, now = new Date()) {
+  const valid = userInfo?.Valid;
+
+  if (!valid || typeof valid !== 'object') {
+    return true;
+  }
+
+  if (valid.enable === undefined) {
+    return true;
+  }
+
+  if (!toBoolean(valid.enable, true)) {
+    return true;
+  }
+
+  const endTime = typeof valid.endTime === 'string' ? valid.endTime.trim() : '';
+
+  if (!endTime) {
+    return true;
+  }
+
+  const endTimestamp = Date.parse(endTime);
+
+  if (Number.isNaN(endTimestamp)) {
+    return true;
+  }
+
+  return endTimestamp >= now.getTime();
+}
+
 function normalizeResponseStatus(parsedXml) {
   const responseStatus = parsedXml?.ResponseStatus;
 
@@ -219,7 +308,7 @@ export async function unlockDoor(doorNo = 1) {
  * @param {string} user.endTime     - ISO date string e.g. '2027-01-01T00:00:00'
  */
 export async function addUser({ employeeNo, name, userType = 'normal', beginTime, endTime }) {
-  return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/SetUp?format=json', {
+  return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/Modify?format=json', {
     method: 'PUT',
     headers: jsonHeaders(),
     body: JSON.stringify({
@@ -269,6 +358,28 @@ export async function getUser(employeeNo) {
         searchResultPosition: 0,
         maxResults: 1,
         EmployeeNoList: [{ employeeNo: String(employeeNo) }],
+      },
+    }),
+  });
+}
+
+function normalizeUserInfoList(userInfo) {
+  return normalizeList(userInfo);
+}
+
+async function searchUsers({
+  searchID,
+  searchResultPosition,
+  maxResults = SEARCH_PAGE_SIZE,
+}) {
+  return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/Search?format=json', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      UserInfoSearchCond: {
+        searchID,
+        searchResultPosition,
+        maxResults,
       },
     }),
   });
@@ -332,11 +443,7 @@ export async function getCard(employeeNo) {
 }
 
 function normalizeCardInfoList(cardInfo) {
-  if (!cardInfo) {
-    return [];
-  }
-
-  return Array.isArray(cardInfo) ? cardInfo : [cardInfo];
+  return normalizeList(cardInfo);
 }
 
 function getNumericField(value, fallback) {
@@ -347,7 +454,7 @@ function getNumericField(value, fallback) {
 async function searchCards({
   searchID,
   searchResultPosition,
-  maxResults = CARD_SEARCH_PAGE_SIZE,
+  maxResults = SEARCH_PAGE_SIZE,
 }) {
   return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/Search?format=json', {
     method: 'POST',
@@ -362,7 +469,7 @@ async function searchCards({
   });
 }
 
-export async function listAvailableCards({ maxResults = CARD_SEARCH_PAGE_SIZE } = {}) {
+export async function listAvailableCards({ maxResults = SEARCH_PAGE_SIZE } = {}) {
   const cardsByNumber = new Map();
   const searchID = `evolutionz-${Date.now()}`;
   let searchResultPosition = 0;
@@ -408,6 +515,129 @@ export async function listAvailableCards({ maxResults = CARD_SEARCH_PAGE_SIZE } 
       left.cardNo.localeCompare(right.cardNo)
     ),
   };
+}
+
+export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = new Date() } = {}) {
+  const placeholderPattern = getPlaceholderSlotPattern();
+  const userSearchID = `evolutionz-users-${Date.now()}`;
+  const cardSearchID = `evolutionz-cards-${Date.now()}`;
+  const placeholderUsers = new Map();
+  const cardsByEmployeeNo = new Map();
+  let userSearchResultPosition = 0;
+  let cardSearchResultPosition = 0;
+
+  while (true) {
+    const response = await searchUsers({
+      searchID: userSearchID,
+      searchResultPosition: userSearchResultPosition,
+      maxResults,
+    });
+    const userInfoSearch = response?.UserInfoSearch;
+
+    if (!userInfoSearch || typeof userInfoSearch !== 'object') {
+      throw new Error('Device returned an unexpected user search response.');
+    }
+
+    const userInfoList = normalizeUserInfoList(userInfoSearch.UserInfo);
+
+    for (const userInfo of userInfoList) {
+      const employeeNo = typeof userInfo?.employeeNo === 'string' ? userInfo.employeeNo.trim() : '';
+      const placeholderName = typeof userInfo?.name === 'string' ? userInfo.name.trim() : '';
+
+      if (!employeeNo || !placeholderName) {
+        continue;
+      }
+
+      if (!placeholderPattern.test(placeholderName) || !isCurrentlyValid(userInfo, now)) {
+        continue;
+      }
+
+      placeholderUsers.set(employeeNo, {
+        employeeNo,
+        placeholderName,
+      });
+    }
+
+    const responseStatus = String(userInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
+    const matchesOnPage = getNumericField(userInfoSearch.numOfMatches, userInfoList.length);
+
+    if (responseStatus !== 'MORE' || matchesOnPage <= 0) {
+      break;
+    }
+
+    userSearchResultPosition += matchesOnPage;
+  }
+
+  while (true) {
+    const response = await searchCards({
+      searchID: cardSearchID,
+      searchResultPosition: cardSearchResultPosition,
+      maxResults,
+    });
+    const cardInfoSearch = response?.CardInfoSearch;
+
+    if (!cardInfoSearch || typeof cardInfoSearch !== 'object') {
+      throw new Error('Device returned an unexpected card search response.');
+    }
+
+    const cardInfoList = normalizeCardInfoList(cardInfoSearch.CardInfo);
+
+    for (const cardInfo of cardInfoList) {
+      const employeeNo = typeof cardInfo?.employeeNo === 'string' ? cardInfo.employeeNo.trim() : '';
+      const cardNo = typeof cardInfo?.cardNo === 'string' ? cardInfo.cardNo.trim() : '';
+
+      if (!employeeNo || !cardNo) {
+        continue;
+      }
+
+      const existingCardNo = cardsByEmployeeNo.get(employeeNo);
+
+      if (!existingCardNo || cardNo.localeCompare(existingCardNo) < 0) {
+        cardsByEmployeeNo.set(employeeNo, cardNo);
+      }
+    }
+
+    const responseStatus = String(cardInfoSearch.responseStatusStrg ?? 'OK').toUpperCase();
+    const matchesOnPage = getNumericField(cardInfoSearch.numOfMatches, cardInfoList.length);
+
+    if (responseStatus !== 'MORE' || matchesOnPage <= 0) {
+      break;
+    }
+
+    cardSearchResultPosition += matchesOnPage;
+  }
+
+  const slots = Array.from(placeholderUsers.values())
+    .map((user) => {
+      const cardNo = cardsByEmployeeNo.get(user.employeeNo);
+
+      if (!cardNo) {
+        return null;
+      }
+
+      return {
+        employeeNo: user.employeeNo,
+        cardNo,
+        placeholderName: user.placeholderName,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) =>
+      left.placeholderName.localeCompare(right.placeholderName) ||
+      left.cardNo.localeCompare(right.cardNo)
+    );
+
+  return { slots };
+}
+
+export async function resetSlot({ employeeNo, placeholderName, now = new Date() }) {
+  return await addUser({
+    employeeNo,
+    name: placeholderName,
+    userType: 'normal',
+    beginTime: `${formatDatePart(now)}T00:00:00`,
+    endTime: getResetSlotEndTime(),
+  });
 }
 
 // ─── Device Info ─────────────────────────────────────────────────────────────
