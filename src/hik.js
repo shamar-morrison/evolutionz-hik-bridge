@@ -9,9 +9,10 @@ const DIGEST_RETRY_ATTEMPTS = 2;
 const AUTH_DEBUG_ENABLED = process.env.HIK_DEBUG_AUTH === '1';
 const REMOTE_CONTROL_PASSWORD_PATTERN = /^\d{6}$/;
 const SEARCH_PAGE_SIZE = 30;
-const DEFAULT_PLACEHOLDER_SLOT_PATTERN = '^[A-Z]\\d{2}$';
+const DEFAULT_PLACEHOLDER_SLOT_PATTERN = '^[A-Z]\\d{1,2}$';
 const DEFAULT_RESET_SLOT_END_TIME = '2037-12-31T23:59:59';
 const AVAILABLE_SLOT_DEBUG_SAMPLE_LIMIT = 10;
+const SLOT_TOKEN_PREFIX_PATTERN = /^([A-Z]\d{1,2})(?=\s|$)/i;
 const VALIDITY_DROP_REASONS = [
   'missingValid',
   'disabled',
@@ -196,6 +197,15 @@ function getPlaceholderSlotPattern() {
   }
 }
 
+function matchesPlaceholderPattern(placeholderPattern, value) {
+  if (typeof value !== 'string' || !value) {
+    return false;
+  }
+
+  placeholderPattern.lastIndex = 0;
+  return placeholderPattern.test(value);
+}
+
 function getResetSlotEndTime() {
   return process.env.HIK_RESET_SLOT_END_TIME?.trim() || DEFAULT_RESET_SLOT_END_TIME;
 }
@@ -361,7 +371,8 @@ function createCardBackedNonSlotDiagnostics() {
     total: 0,
     missingUserRecord: 0,
     missingPlaceholderName: 0,
-    nonPlaceholderName: 0,
+    occupiedSlotName: 0,
+    otherNonPlaceholderName: 0,
     invalidValidity: createInvalidValidityDiagnostics(),
   };
 }
@@ -395,7 +406,7 @@ function collectMatchingPlaceholderNames(nameCandidates, placeholderPattern) {
   const seenValues = new Set();
 
   for (const [key, value] of Object.entries(nameCandidates)) {
-    if (!placeholderPattern.test(value) || seenValues.has(value)) {
+    if (!matchesPlaceholderPattern(placeholderPattern, value) || seenValues.has(value)) {
       continue;
     }
 
@@ -407,6 +418,50 @@ function collectMatchingPlaceholderNames(nameCandidates, placeholderPattern) {
   }
 
   return matchingPlaceholderNames;
+}
+
+function extractSlotToken(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const match = trimmedValue.match(SLOT_TOKEN_PREFIX_PATTERN);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function collectSlotTokenCandidates(nameCandidates) {
+  const slotTokenCandidates = [];
+  const seenCandidates = new Set();
+
+  for (const [key, value] of Object.entries(nameCandidates)) {
+    const slotToken = extractSlotToken(value);
+
+    if (!slotToken) {
+      continue;
+    }
+
+    const candidateKey = `${key}\u0000${slotToken}\u0000${value}`;
+
+    if (seenCandidates.has(candidateKey)) {
+      continue;
+    }
+
+    seenCandidates.add(candidateKey);
+    slotTokenCandidates.push({
+      key,
+      value,
+      slotToken,
+      exactMatch: value === slotToken,
+    });
+  }
+
+  return slotTokenCandidates;
 }
 
 function hasFocusedPlaceholderMatch(debugConfig, values = []) {
@@ -423,6 +478,24 @@ function isFocusedCardNoMatch(debugConfig, cardNo) {
   return !!cardNo && debugConfig.focusedCardNoSet.has(cardNo);
 }
 
+function collectFocusedPlaceholderValues({
+  extractedName,
+  placeholderNameHint,
+  slotToken,
+  nameCandidates,
+  matchingPlaceholderNames,
+  slotTokenCandidates,
+}) {
+  return [
+    extractedName,
+    placeholderNameHint,
+    slotToken,
+    ...Object.values(nameCandidates ?? {}),
+    ...(matchingPlaceholderNames ?? []).map((entry) => entry.value),
+    ...(slotTokenCandidates ?? []).map((entry) => entry.slotToken),
+  ].filter(Boolean);
+}
+
 function createUserDebugRecord(userInfo, placeholderPattern, now) {
   const employeeNo = typeof userInfo?.employeeNo === 'string' ? userInfo.employeeNo.trim() : '';
   const canonicalEmployeeNo = canonicalizeEmployeeNo(employeeNo);
@@ -432,9 +505,13 @@ function createUserDebugRecord(userInfo, placeholderPattern, now) {
     nameCandidates,
     placeholderPattern
   );
+  const slotTokenCandidates = collectSlotTokenCandidates(nameCandidates);
+  const slotToken = extractSlotToken(extractedName);
+  const hasExactPlaceholderName = matchesPlaceholderPattern(placeholderPattern, extractedName);
+  const hasOccupiedSlotName = !!slotToken && extractedName !== slotToken;
   const placeholderNameHint =
     matchingPlaceholderNames[0]?.value ??
-    (placeholderPattern.test(extractedName) ? extractedName : null);
+    (hasExactPlaceholderName ? extractedName : null);
 
   let classification = 'validPlaceholder';
   let validityEvaluated = false;
@@ -446,8 +523,8 @@ function createUserDebugRecord(userInfo, placeholderPattern, now) {
     classification = 'missingEmployeeNo';
   } else if (!extractedName) {
     classification = 'missingPlaceholderName';
-  } else if (!placeholderPattern.test(extractedName)) {
-    classification = 'nonPlaceholderName';
+  } else if (!hasExactPlaceholderName) {
+    classification = hasOccupiedSlotName ? 'occupiedSlotName' : 'otherNonPlaceholderName';
   } else {
     const validity = analyzeUserValidity(userInfo, now);
 
@@ -463,8 +540,10 @@ function createUserDebugRecord(userInfo, placeholderPattern, now) {
     canonicalEmployeeNo,
     extractedName,
     placeholderNameHint,
+    slotToken,
     nameCandidates,
     matchingPlaceholderNames,
+    slotTokenCandidates,
     classification,
     validityEvaluated,
     isCurrentlyValid,
@@ -882,7 +961,8 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     droppedUsers: {
       missingEmployeeNo: 0,
       missingPlaceholderName: 0,
-      nonPlaceholderName: 0,
+      occupiedSlotName: 0,
+      otherNonPlaceholderName: 0,
       invalidValidity: createInvalidValidityDiagnostics(),
     },
     droppedCards: {
@@ -934,8 +1014,13 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
         continue;
       }
 
-      if (userDebugRecord.classification === 'nonPlaceholderName') {
-        diagnostics.droppedUsers.nonPlaceholderName += 1;
+      if (userDebugRecord.classification === 'occupiedSlotName') {
+        diagnostics.droppedUsers.occupiedSlotName += 1;
+        continue;
+      }
+
+      if (userDebugRecord.classification === 'otherNonPlaceholderName') {
+        diagnostics.droppedUsers.otherNonPlaceholderName += 1;
         continue;
       }
 
@@ -1084,11 +1169,7 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     const cardDebugRecord = selectedCardRecordsByJoinEmployeeNo.get(joinEmployeeNo) ?? null;
     const userDebugRecord = userDebugRecordsByJoinEmployeeNo.get(joinEmployeeNo) ?? null;
     const placeholderNameValues = userDebugRecord
-      ? [
-          userDebugRecord.placeholderNameHint,
-          userDebugRecord.extractedName,
-          ...Object.values(userDebugRecord.nameCandidates),
-        ]
+      ? collectFocusedPlaceholderValues(userDebugRecord)
       : [];
     const forceInclude =
       hasFocusedPlaceholderMatch(debugConfig, placeholderNameValues) ||
@@ -1112,8 +1193,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
 
       if (userClassification === 'missingPlaceholderName') {
         diagnostics.cardBackedNonSlots.missingPlaceholderName += 1;
-      } else if (userClassification === 'nonPlaceholderName') {
-        diagnostics.cardBackedNonSlots.nonPlaceholderName += 1;
+      } else if (userClassification === 'occupiedSlotName') {
+        diagnostics.cardBackedNonSlots.occupiedSlotName += 1;
+      } else if (userClassification === 'otherNonPlaceholderName') {
+        diagnostics.cardBackedNonSlots.otherNonPlaceholderName += 1;
       } else if (userClassification === 'invalidValidity') {
         recordInvalidValidity(
           diagnostics.cardBackedNonSlots.invalidValidity,
@@ -1124,16 +1207,18 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
 
     cardBackedNonSlotRecords.push({
       key:
-        userDebugRecord?.placeholderNameHint
-          ? `${cardNo} • ${userDebugRecord.placeholderNameHint}`
+        userDebugRecord?.slotToken || userDebugRecord?.placeholderNameHint
+          ? `${cardNo} • ${userDebugRecord?.slotToken ?? userDebugRecord?.placeholderNameHint}`
           : cardNo,
       cardNo,
       employeeNo: cardDebugRecord?.employeeNo ?? userDebugRecord?.employeeNo ?? null,
       canonicalEmployeeNo: joinEmployeeNo,
       placeholderNameHint: userDebugRecord?.placeholderNameHint ?? null,
+      slotToken: userDebugRecord?.slotToken ?? null,
       extractedName: userDebugRecord?.extractedName ?? null,
       nameCandidates: userDebugRecord?.nameCandidates ?? {},
       matchingPlaceholderNames: userDebugRecord?.matchingPlaceholderNames ?? [],
+      slotTokenCandidates: userDebugRecord?.slotTokenCandidates ?? [],
       userRecordFound: !!userDebugRecord,
       userClassification,
       validityEvaluated: userDebugRecord?.validityEvaluated ?? false,
@@ -1154,11 +1239,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
     const focusedPlaceholderJoinEmployeeNos = new Set(
       userDebugRecords
         .filter((record) =>
-          hasFocusedPlaceholderMatch(debugConfig, [
-            record.extractedName,
-            record.placeholderNameHint,
-            ...Object.values(record.nameCandidates),
-          ])
+          hasFocusedPlaceholderMatch(
+            debugConfig,
+            collectFocusedPlaceholderValues(record)
+          )
         )
         .map((record) => record.canonicalEmployeeNo)
         .filter(Boolean)
@@ -1184,13 +1268,14 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
           const hasPlaceholderEvidence =
             record.classification === 'validPlaceholder' ||
             record.classification === 'invalidValidity' ||
-            record.matchingPlaceholderNames.length > 0;
+            record.classification === 'occupiedSlotName' ||
+            record.matchingPlaceholderNames.length > 0 ||
+            record.slotTokenCandidates.length > 0;
           const forceInclude =
-            hasFocusedPlaceholderMatch(debugConfig, [
-              record.extractedName,
-              record.placeholderNameHint,
-              ...Object.values(record.nameCandidates),
-            ]) ||
+            hasFocusedPlaceholderMatch(
+              debugConfig,
+              collectFocusedPlaceholderValues(record)
+            ) ||
             (!!record.canonicalEmployeeNo &&
               focusedCardJoinEmployeeNos.has(record.canonicalEmployeeNo));
 
@@ -1198,11 +1283,13 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
         })
         .sort((left, right) => {
           const leftKey =
+            left.slotToken ??
             left.placeholderNameHint ??
             left.extractedName ??
             left.employeeNo ??
             left.canonicalEmployeeNo;
           const rightKey =
+            right.slotToken ??
             right.placeholderNameHint ??
             right.extractedName ??
             right.employeeNo ??
@@ -1211,11 +1298,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
           return leftKey.localeCompare(rightKey);
         })
         .map((record) => {
-          const isFocusedPlaceholder = hasFocusedPlaceholderMatch(debugConfig, [
-            record.extractedName,
-            record.placeholderNameHint,
-            ...Object.values(record.nameCandidates),
-          ]);
+          const isFocusedPlaceholder = hasFocusedPlaceholderMatch(
+            debugConfig,
+            collectFocusedPlaceholderValues(record)
+          );
           const isFocusedCard =
             !!record.canonicalEmployeeNo &&
             focusedCardJoinEmployeeNos.has(record.canonicalEmployeeNo);
@@ -1242,6 +1328,7 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
 
           return {
             key:
+              record.slotToken ??
               record.placeholderNameHint ??
               record.extractedName ??
               record.employeeNo ??
@@ -1250,8 +1337,10 @@ export async function listAvailableSlots({ maxResults = SEARCH_PAGE_SIZE, now = 
             canonicalEmployeeNo: record.canonicalEmployeeNo || null,
             extractedName: record.extractedName || null,
             placeholderNameHint: record.placeholderNameHint,
+            slotToken: record.slotToken,
             nameCandidates: record.nameCandidates,
             matchingPlaceholderNames: record.matchingPlaceholderNames,
+            slotTokenCandidates: record.slotTokenCandidates,
             classification: record.classification,
             validityEvaluated: record.validityEvaluated,
             isCurrentlyValid: record.isCurrentlyValid,

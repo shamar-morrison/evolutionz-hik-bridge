@@ -47,6 +47,7 @@ HIK_REMOTE_PASSWORD=123456
 HIK_DEBUG_AVAILABLE_SLOTS=0
 HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=
 HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=
+HIK_PLACEHOLDER_SLOT_PATTERN=^[A-Z]\d{1,2}$
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
@@ -55,6 +56,8 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 `HIK_REMOTE_PASSWORD` must match the 6-digit remote door password configured on the device in iVMS-4200 / access control settings. The bridge needs that extra credential specifically for `unlock_door`.
 Set `HIK_DEBUG_AVAILABLE_SLOTS=1` temporarily when you need extra `list_available_slots` diagnostics in the laptop logs. That debug mode keeps the job result shape unchanged, but logs bounded pretty-JSON reports for scanned users, scanned cards, and card-backed non-slots.
 Use `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS` when you need to force specific slot labels or card numbers into the debug output, for example `HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES=P55` and `HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS=0105451261`.
+Reusable slots are exact labels only, such as `P4` or `P55`. Names like `P4 Ackeem Planter` or `P55 Jane Doe` are treated as occupied and stay unavailable even if their validity has expired.
+If the gym laptop `.env` still pins `HIK_PLACEHOLDER_SLOT_PATTERN=^[A-Z]\d{2}$`, update it to `^[A-Z]\d{1,2}$` or remove the override so one-digit exact slot labels are not missed.
 
 ### 4. Run the service
 ```bash

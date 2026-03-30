@@ -787,7 +787,8 @@ test('listAvailableSlots paginates fully, canonicalizes employee numbers, and fi
         droppedUsers: {
           missingEmployeeNo: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 1,
+          occupiedSlotName: 1,
+          otherNonPlaceholderName: 0,
           invalidValidity: {
             total: 2,
             missingValid: 0,
@@ -810,7 +811,178 @@ test('listAvailableSlots paginates fully, canonicalizes employee numbers, and fi
           total: 1,
           missingUserRecord: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 1,
+          occupiedSlotName: 1,
+          otherNonPlaceholderName: 0,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('listAvailableSlots returns exact one-digit and two-digit slot labels but keeps occupied slot-prefixed names unavailable', async () => {
+  const device = createAuthorizedApiServer(({ req, res, body }) => {
+    const payload = JSON.parse(body);
+
+    if (req.url === '/ISAPI/AccessControl/UserInfo/Search?format=json') {
+      const position = payload.UserInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          UserInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 5,
+            totalMatches: 5,
+            UserInfo: [
+              {
+                employeeNo: '00000604',
+                name: 'P4',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+              {
+                employeeNo: '00000655',
+                name: 'P55',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+              {
+                employeeNo: '00000605',
+                name: 'P4 Ackeem Planter',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2025-01-01T00:00:00',
+                },
+              },
+              {
+                employeeNo: '00000656',
+                name: 'P55 Waxsley Stewart-Betty',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2025-01-01T00:00:00',
+                },
+              },
+              {
+                employeeNo: '00000657',
+                name: 'Front Desk',
+                Valid: {
+                  enable: true,
+                  beginTime: '2020-01-01T00:00:00',
+                  endTime: '2030-12-31T23:59:59',
+                },
+              },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    if (req.url === '/ISAPI/AccessControl/CardInfo/Search?format=json') {
+      const position = payload.CardInfoSearchCond.searchResultPosition;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+
+      if (position === 0) {
+        res.end(JSON.stringify({
+          CardInfoSearch: {
+            responseStatusStrg: 'OK',
+            numOfMatches: 5,
+            totalMatches: 5,
+            CardInfo: [
+              { employeeNo: '604', cardNo: '0104604004' },
+              { employeeNo: '655', cardNo: '0105451261' },
+              { employeeNo: '605', cardNo: '0104605005' },
+              { employeeNo: '656', cardNo: '0105456565' },
+              { employeeNo: '657', cardNo: '0105456575' },
+            ],
+          },
+        }));
+        return;
+      }
+    }
+
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end(`unexpected route ${req.url}`);
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.listAvailableSlots({
+      now: new Date('2026-03-30T14:15:16'),
+    });
+
+    assert.deepEqual(result, {
+      slots: [
+        {
+          employeeNo: '00000604',
+          cardNo: '0104604004',
+          placeholderName: 'P4',
+        },
+        {
+          employeeNo: '00000655',
+          cardNo: '0105451261',
+          placeholderName: 'P55',
+        },
+      ],
+      diagnostics: {
+        userPages: 1,
+        cardPages: 1,
+        totalUsersScanned: 5,
+        totalCardsScanned: 5,
+        matchedPlaceholderUsers: 2,
+        matchedJoinedSlots: 2,
+        droppedUsers: {
+          missingEmployeeNo: 0,
+          missingPlaceholderName: 0,
+          occupiedSlotName: 2,
+          otherNonPlaceholderName: 1,
+          invalidValidity: {
+            total: 0,
+            missingValid: 0,
+            disabled: 0,
+            invalidBeginTime: 0,
+            futureBeginTime: 0,
+            missingEndTime: 0,
+            invalidEndTime: 0,
+            expiredEndTime: 0,
+          },
+        },
+        droppedCards: {
+          missingEmployeeNo: 0,
+          missingCardNo: 0,
+        },
+        droppedSlots: {
+          withoutCard: 0,
+        },
+        cardBackedNonSlots: {
+          total: 3,
+          missingUserRecord: 0,
+          missingPlaceholderName: 0,
+          occupiedSlotName: 2,
+          otherNonPlaceholderName: 1,
           invalidValidity: {
             total: 0,
             missingValid: 0,
@@ -975,7 +1147,8 @@ test('listAvailableSlots records granular validity diagnostics and JSON debug re
         droppedUsers: {
           missingEmployeeNo: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 0,
+          occupiedSlotName: 0,
+          otherNonPlaceholderName: 0,
           invalidValidity: {
             total: 7,
             missingValid: 1,
@@ -998,7 +1171,8 @@ test('listAvailableSlots records granular validity diagnostics and JSON debug re
           total: 0,
           missingUserRecord: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 0,
+          occupiedSlotName: 0,
+          otherNonPlaceholderName: 0,
           invalidValidity: {
             total: 0,
             missingValid: 0,
@@ -1180,7 +1354,8 @@ test('listAvailableSlots reports card-backed non-slots by card number and captur
         droppedUsers: {
           missingEmployeeNo: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 1,
+          occupiedSlotName: 0,
+          otherNonPlaceholderName: 1,
           invalidValidity: {
             total: 0,
             missingValid: 0,
@@ -1203,7 +1378,8 @@ test('listAvailableSlots reports card-backed non-slots by card number and captur
           total: 1,
           missingUserRecord: 0,
           missingPlaceholderName: 0,
-          nonPlaceholderName: 1,
+          occupiedSlotName: 0,
+          otherNonPlaceholderName: 1,
           invalidValidity: {
             total: 0,
             missingValid: 0,
@@ -1242,7 +1418,22 @@ test('listAvailableSlots reports card-backed non-slots by card number and captur
         value: 'P55',
       },
     ]);
-    assert.equal(userReport.records[0].classification, 'nonPlaceholderName');
+    assert.equal(userReport.records[0].slotToken, null);
+    assert.deepEqual(userReport.records[0].slotTokenCandidates, [
+      {
+        key: 'displayName',
+        value: 'P55',
+        slotToken: 'P55',
+        exactMatch: true,
+      },
+      {
+        key: 'aliasName',
+        value: 'P55',
+        slotToken: 'P55',
+        exactMatch: true,
+      },
+    ]);
+    assert.equal(userReport.records[0].classification, 'otherNonPlaceholderName');
 
     assert.deepEqual(cardReport.records, [
       {
@@ -1265,6 +1456,7 @@ test('listAvailableSlots reports card-backed non-slots by card number and captur
         employeeNo: '624',
         canonicalEmployeeNo: '624',
         placeholderNameHint: 'P55',
+        slotToken: null,
         extractedName: 'Front Desk',
         nameCandidates: {
           name: 'Front Desk',
@@ -1277,8 +1469,22 @@ test('listAvailableSlots reports card-backed non-slots by card number and captur
             value: 'P55',
           },
         ],
+        slotTokenCandidates: [
+          {
+            key: 'displayName',
+            value: 'P55',
+            slotToken: 'P55',
+            exactMatch: true,
+          },
+          {
+            key: 'aliasName',
+            value: 'P55',
+            slotToken: 'P55',
+            exactMatch: true,
+          },
+        ],
         userRecordFound: true,
-        userClassification: 'nonPlaceholderName',
+        userClassification: 'otherNonPlaceholderName',
         validityEvaluated: false,
         isCurrentlyValid: null,
         validityReason: null,
@@ -1378,9 +1584,11 @@ test('listAvailableSlots reports missing user records for card-backed non-slots'
         employeeNo: '902',
         canonicalEmployeeNo: '902',
         placeholderNameHint: null,
+        slotToken: null,
         extractedName: null,
         nameCandidates: {},
         matchingPlaceholderNames: [],
+        slotTokenCandidates: [],
         userRecordFound: false,
         userClassification: 'missingUserRecord',
         validityEvaluated: false,
@@ -1408,8 +1616,8 @@ test('listAvailableSlots focused placeholder and card filters override generic d
     if (index === 11) {
       return {
         employeeNo,
-        name: 'Member 99',
-        displayName: 'P99',
+        name: 'P55 John Doe',
+        displayName: 'Occupied member',
       };
     }
 
@@ -1469,7 +1677,7 @@ test('listAvailableSlots focused placeholder and card filters override generic d
   const port = await device.start();
   const hik = await loadHikModule(port, {
     HIK_DEBUG_AVAILABLE_SLOTS: '1',
-    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P99',
+    HIK_DEBUG_AVAILABLE_SLOTS_PLACEHOLDER_NAMES: 'P55',
     HIK_DEBUG_AVAILABLE_SLOTS_CARD_NOS: '9999999999',
   });
   const originalInfo = console.info;
@@ -1507,24 +1715,28 @@ test('listAvailableSlots focused placeholder and card filters override generic d
     assert.deepEqual(
       nonSlotReport.records.find((record) => record.cardNo === '9999999999'),
       {
-        key: '9999999999 • P99',
+        key: '9999999999 • P55',
         cardNo: '9999999999',
         employeeNo: '911',
         canonicalEmployeeNo: '911',
-        placeholderNameHint: 'P99',
-        extractedName: 'Member 99',
+        placeholderNameHint: null,
+        slotToken: 'P55',
+        extractedName: 'P55 John Doe',
         nameCandidates: {
-          name: 'Member 99',
-          displayName: 'P99',
+          name: 'P55 John Doe',
+          displayName: 'Occupied member',
         },
-        matchingPlaceholderNames: [
+        matchingPlaceholderNames: [],
+        slotTokenCandidates: [
           {
-            key: 'displayName',
-            value: 'P99',
+            key: 'name',
+            value: 'P55 John Doe',
+            slotToken: 'P55',
+            exactMatch: false,
           },
         ],
         userRecordFound: true,
-        userClassification: 'nonPlaceholderName',
+        userClassification: 'occupiedSlotName',
         validityEvaluated: false,
         isCurrentlyValid: null,
         validityReason: null,
@@ -1536,8 +1748,8 @@ test('listAvailableSlots focused placeholder and card filters override generic d
         },
         rawUserInfo: {
           employeeNo: '00000911',
-          name: 'Member 99',
-          displayName: 'P99',
+          name: 'P55 John Doe',
+          displayName: 'Occupied member',
         },
       }
     );
