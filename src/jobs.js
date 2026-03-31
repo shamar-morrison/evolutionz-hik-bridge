@@ -7,8 +7,8 @@ import { toBoolean } from './hik/shared.js';
 import { getUserModifyMode } from './hik/config.js';
 
 const WRITE_JOB_ROUTES = {
-  add_user: '/ISAPI/AccessControl/UserInfo/Modify?format=json',
-  add_card: '/ISAPI/AccessControl/CardInfo/Modify?format=json',
+  add_user: '/ISAPI/AccessControl/UserInfo/SetUp?format=json',
+  add_card: '/ISAPI/AccessControl/CardInfo/SetUp?format=json',
 };
 
 function shouldLogWritePayloadDiagnostics() {

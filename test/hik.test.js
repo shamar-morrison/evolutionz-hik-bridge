@@ -488,7 +488,7 @@ test('unlockDoor error mentions the endpoint when the final 401 has no digest ch
   }
 });
 
-test('addUser uses PUT UserInfo/Modify with the expected payload', async () => {
+test('addUser uses POST UserInfo/SetUp with the expected payload', async () => {
   const device = createAuthorizedApiServer(({ res }) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -508,8 +508,8 @@ test('addUser uses PUT UserInfo/Modify with the expected payload', async () => {
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: 'EVZ-20260330141516-ABC123',
@@ -549,8 +549,8 @@ test('addUser supports the valid_only user-modify payload mode', async () => {
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: 'EVZ-20260330141516-ABC123',
@@ -588,8 +588,8 @@ test('addUser supports the minimal user-modify payload mode', async () => {
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: 'EVZ-20260330141516-ABC123',
@@ -602,7 +602,7 @@ test('addUser supports the minimal user-modify payload mode', async () => {
   }
 });
 
-test('addCard uses PUT CardInfo/Modify to assign an existing card', async () => {
+test('addCard uses POST CardInfo/SetUp to assign an existing card', async () => {
   const device = createAuthorizedApiServer(({ res }) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -617,8 +617,8 @@ test('addCard uses PUT CardInfo/Modify to assign an existing card', async () => 
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/CardInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/CardInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       CardInfo: {
         employeeNo: 'EVZ-20260330141516-ABC123',
@@ -3594,8 +3594,8 @@ test('resetSlot restores the placeholder name with the configured far-future exp
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: '00000611',
@@ -3634,8 +3634,8 @@ test('resetSlot honors the configured valid_only user-modify payload mode', asyn
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
-    assert.equal(request.method, 'PUT');
-    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/Modify?format=json');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/UserInfo/SetUp?format=json');
     assert.deepEqual(payload, {
       UserInfo: {
         employeeNo: '00000611',
@@ -3673,7 +3673,7 @@ test('non-2xx Hik responses include method and endpoint details', async () => {
         beginTime: '2026-03-30T00:00:00',
         endTime: '2026-07-15T23:59:59',
       }),
-      /Device returned 400 for PUT \/ISAPI\/AccessControl\/UserInfo\/Modify\?format=json:/
+      /Device returned 400 for POST \/ISAPI\/AccessControl\/UserInfo\/SetUp\?format=json:/
     );
   } finally {
     await device.close();

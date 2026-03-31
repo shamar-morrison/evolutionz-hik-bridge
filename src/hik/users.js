@@ -38,8 +38,8 @@ export function buildUserInfoPayload({
 }
 
 export async function addUser({ employeeNo, name, userType = 'normal', beginTime, endTime }) {
-  return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/Modify?format=json', {
-    method: 'PUT',
+  return await performIsapiRequest('/ISAPI/AccessControl/UserInfo/SetUp?format=json', {
+    method: 'POST',
     headers: jsonHeaders(),
     body: JSON.stringify({
       UserInfo: buildUserInfoPayload({

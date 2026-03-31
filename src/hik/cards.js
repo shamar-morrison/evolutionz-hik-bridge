@@ -8,8 +8,8 @@ import {
 } from './shared.js';
 
 export async function addCard(employeeNo, cardNo) {
-  return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/Modify?format=json', {
-    method: 'PUT',
+  return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/SetUp?format=json', {
+    method: 'POST',
     headers: jsonHeaders(),
     body: JSON.stringify({
       CardInfo: {

@@ -99,7 +99,7 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
   const hikApi = {
     addUser: async () => {
       throw new Error(
-        'Device returned 400 for PUT /ISAPI/AccessControl/UserInfo/Modify?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+        'Device returned 400 for POST /ISAPI/AccessControl/UserInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
       );
     },
   };
@@ -130,7 +130,7 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
           },
           hikApi
         ),
-      /UserInfo\/Modify\?format=json/
+      /UserInfo\/SetUp\?format=json/
     );
   } finally {
     console.error = originalError;
@@ -155,7 +155,7 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
   assert.match(message, /^\[hik\] add_user write failure diagnostics\n/);
   assert.deepEqual(diagnostics, {
     jobType: 'add_user',
-    route: '/ISAPI/AccessControl/UserInfo/Modify?format=json',
+    route: '/ISAPI/AccessControl/UserInfo/SetUp?format=json',
     payloadSummary: {
       employeeNo: '00000611',
       name: 'Jane Doe',
@@ -176,7 +176,7 @@ test('processJob logs add_card write diagnostics when debug flag is enabled', as
   const hikApi = {
     addCard: async () => {
       throw new Error(
-        'Device returned 400 for PUT /ISAPI/AccessControl/CardInfo/Modify?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+        'Device returned 400 for POST /ISAPI/AccessControl/CardInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
       );
     },
   };
@@ -203,7 +203,7 @@ test('processJob logs add_card write diagnostics when debug flag is enabled', as
           },
           hikApi
         ),
-      /CardInfo\/Modify\?format=json/
+      /CardInfo\/SetUp\?format=json/
     );
   } finally {
     console.error = originalError;
@@ -222,7 +222,7 @@ test('processJob logs add_card write diagnostics when debug flag is enabled', as
   assert.match(message, /^\[hik\] add_card write failure diagnostics\n/);
   assert.deepEqual(diagnostics, {
     jobType: 'add_card',
-    route: '/ISAPI/AccessControl/CardInfo/Modify?format=json',
+    route: '/ISAPI/AccessControl/CardInfo/SetUp?format=json',
     payloadSummary: {
       employeeNo: '00000611',
       name: null,
