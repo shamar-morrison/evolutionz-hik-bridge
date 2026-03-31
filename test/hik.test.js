@@ -336,6 +336,9 @@ test('src/hik.js preserves the public Hik API surface after the module split', a
       'listAvailableSlots',
       'resetSlot',
       'revokeCard',
+      'searchCards',
+      'searchUsers',
+      'syncAllMembers',
       'unlockDoor',
     ].sort()
   );

@@ -70,6 +70,39 @@ test('processJob dispatches list_available_slots jobs', async () => {
   });
 });
 
+test('processJob dispatches sync_all_members jobs', async () => {
+  const calls = [];
+  const hikApi = {
+    syncAllMembers: async (payload) => {
+      calls.push(payload);
+      return {
+        membersImported: 3,
+        cardsImported: 4,
+        placeholderSlotsSkipped: 1,
+      };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-sync',
+      type: 'sync_all_members',
+      payload: {},
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [{}]);
+  assert.deepEqual(result, {
+    success: true,
+    result: {
+      membersImported: 3,
+      cardsImported: 4,
+      placeholderSlotsSkipped: 1,
+    },
+  });
+});
+
 test('processJob dispatches reset_slot jobs', async () => {
   const calls = [];
   const hikApi = {

@@ -4,16 +4,13 @@
 // and executes them against the HiKVision device on the local network.
 
 import 'dotenv/config';
-import { createClient } from '@supabase/supabase-js';
 import { processJob } from './jobs.js';
 import { createSerialJobQueue } from './job-queue.js';
+import { getSupabaseClient } from './supabase.js';
 
 // ─── Supabase Setup ───────────────────────────────────────────────────────────
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const supabase = getSupabaseClient();
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
