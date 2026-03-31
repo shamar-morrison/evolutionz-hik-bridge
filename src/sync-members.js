@@ -54,7 +54,7 @@ function buildPagedSearchEnvelope(searchKey, items, metadata) {
 
 async function fetchAllUsers({ searchUsersFn, maxResults }) {
   const users = [];
-  const searchID = `evolutionz-sync-users-${Date.now()}`;
+  const searchID = '1';
   let searchResultPosition = 0;
 
   while (true) {
