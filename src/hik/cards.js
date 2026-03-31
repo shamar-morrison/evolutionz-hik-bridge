@@ -9,7 +9,7 @@ import {
 
 export async function addCard(employeeNo, cardNo) {
   return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/SetUp?format=json', {
-    method: 'POST',
+    method: 'PUT',
     headers: jsonHeaders(),
     body: JSON.stringify({
       CardInfo: {

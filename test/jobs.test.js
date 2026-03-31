@@ -99,7 +99,7 @@ test('processJob logs add_user write diagnostics when debug flag is enabled', as
   const hikApi = {
     addUser: async () => {
       throw new Error(
-        'Device returned 400 for POST /ISAPI/AccessControl/UserInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+        'Device returned 400 for PUT /ISAPI/AccessControl/UserInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
       );
     },
   };
@@ -176,7 +176,7 @@ test('processJob logs add_card write diagnostics when debug flag is enabled', as
   const hikApi = {
     addCard: async () => {
       throw new Error(
-        'Device returned 400 for POST /ISAPI/AccessControl/CardInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
+        'Device returned 400 for PUT /ISAPI/AccessControl/CardInfo/SetUp?format=json: {"statusString":"Invalid Content","subStatusCode":"badParameters"}'
       );
     },
   };
