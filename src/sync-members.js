@@ -114,6 +114,17 @@ async function fetchAllCards({ searchCardsFn, maxResults }) {
 
     cards.push(...page.items);
 
+    console.info('[hik] syncAllMembers card page trace', {
+      searchResultPosition,
+      pageCardCount: page.items.length,
+      totalCardsSoFar: cards.length,
+      containsTargetCardInPage: page.items.some(
+        (card) => String(card?.cardNo ?? '').trim() === '3582702940'
+      ),
+      shouldContinue: page.shouldContinue,
+      responseStatusStrg: searchMetadata.responseStatusStrg,
+    });
+
     if (!page.shouldContinue) {
       break;
     }
