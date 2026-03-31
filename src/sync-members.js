@@ -1,4 +1,4 @@
-import { SEARCH_PAGE_SIZE } from './hik/constants.js';
+import { SEARCH_PAGE_SIZE, SLOT_TOKEN_PREFIX_PATTERN } from './hik/constants.js';
 import {
   canonicalizeEmployeeNo,
   getNumericField,
@@ -10,10 +10,26 @@ import { normalizeCardInfoList, searchCards } from './hik/cards.js';
 import { normalizeUserInfoList, searchUsers } from './hik/users.js';
 import { getSupabaseClient } from './supabase.js';
 
-const PLACEHOLDER_SLOT_PATTERN = /^[A-Z]\d{1,2}$/;
-
 function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function extractCardCode(name) {
+  const normalizedName = normalizeText(name);
+  const match = normalizedName.match(SLOT_TOKEN_PREFIX_PATTERN);
+
+  return match?.[1] ? match[1].toUpperCase() : null;
+}
+
+function stripCardCodePrefix(name) {
+  const normalizedName = normalizeText(name);
+  const cardCode = extractCardCode(normalizedName);
+
+  if (!cardCode) {
+    return normalizedName;
+  }
+
+  return normalizeText(normalizedName.slice(cardCode.length));
 }
 
 function parseDeviceTimestamp(value) {
@@ -136,7 +152,10 @@ async function fetchAllCards({ searchCardsFn, maxResults }) {
 }
 
 function isPlaceholderName(name) {
-  return PLACEHOLDER_SLOT_PATTERN.test(name);
+  const normalizedName = normalizeText(name);
+  const cardCode = extractCardCode(normalizedName);
+
+  return !!cardCode && normalizedName.toUpperCase() === cardCode;
 }
 
 function normalizeMemberValidity(valid, now) {
@@ -181,6 +200,14 @@ function upsertCardRow(cardsByNumber, nextCardRow) {
 
   if (existingCardRow.status === 'available' && nextCardRow.status === 'assigned') {
     cardsByNumber.set(nextCardRow.card_no, nextCardRow);
+    return;
+  }
+
+  if (!existingCardRow.card_code && nextCardRow.card_code) {
+    cardsByNumber.set(nextCardRow.card_no, {
+      ...existingCardRow,
+      card_code: nextCardRow.card_code,
+    });
   }
 }
 
@@ -209,19 +236,76 @@ async function insertCards(supabase, cards) {
     return [];
   }
 
-  const { data, error } = await supabase
+  const cardNos = cards.map((card) => card.card_no);
+  const cardsByNumber = new Map(cards.map((card) => [card.card_no, card]));
+  const { data: existingCards, error: existingCardsError } = await supabase
     .from('cards')
-    .upsert(cards, {
-      onConflict: 'card_no',
-      ignoreDuplicates: true,
-    })
-    .select('card_no');
+    .select('card_no, card_code')
+    .in('card_no', cardNos);
 
-  if (error) {
-    throw new Error(`Failed to sync cards into Supabase: ${error.message}`);
+  if (existingCardsError) {
+    throw new Error(`Failed to read existing cards from Supabase: ${existingCardsError.message}`);
   }
 
-  return Array.isArray(data) ? data : [];
+  const existingCardsByNumber = new Map(
+    (Array.isArray(existingCards) ? existingCards : []).map((card) => [
+      normalizeText(card.card_no),
+      {
+        card_no: normalizeText(card.card_no),
+        card_code: normalizeText(card.card_code) || null,
+      },
+    ])
+  );
+  const newCards = cards.filter((card) => !existingCardsByNumber.has(card.card_no));
+  let insertedRows = [];
+
+  if (newCards.length > 0) {
+    const { data, error } = await supabase
+      .from('cards')
+      .upsert(newCards, {
+        onConflict: 'card_no',
+        ignoreDuplicates: true,
+      })
+      .select('card_no');
+
+    if (error) {
+      throw new Error(`Failed to insert new cards into Supabase: ${error.message}`);
+    }
+
+    insertedRows = Array.isArray(data) ? data : [];
+  }
+
+  const updatedRows = [];
+  const updatedAt = new Date().toISOString();
+
+  for (const [cardNo, existingCard] of existingCardsByNumber.entries()) {
+    const incomingCard = cardsByNumber.get(cardNo);
+    const incomingCardCode = normalizeText(incomingCard?.card_code) || null;
+
+    if (existingCard.card_code || !incomingCardCode) {
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from('cards')
+      .update({
+        card_code: incomingCardCode,
+        updated_at: updatedAt,
+      })
+      .eq('card_no', cardNo)
+      .is('card_code', null)
+      .select('card_no');
+
+    if (error) {
+      throw new Error(`Failed to backfill card codes into Supabase: ${error.message}`);
+    }
+
+    if (Array.isArray(data)) {
+      updatedRows.push(...data);
+    }
+  }
+
+  return [...insertedRows, ...updatedRows];
 }
 
 export async function syncAllMembers({
@@ -248,6 +332,7 @@ export async function syncAllMembers({
     }
 
     const name = normalizeText(userInfo?.name);
+    const cardCode = extractCardCode(name);
     const isPlaceholder = isPlaceholderName(name);
 
     if (isPlaceholder) {
@@ -255,6 +340,7 @@ export async function syncAllMembers({
         canonicalEmployeeNo,
         employeeNo,
         name,
+        cardCode,
         isPlaceholder: true,
       };
 
@@ -273,7 +359,8 @@ export async function syncAllMembers({
     const memberRecord = {
       canonicalEmployeeNo,
       employeeNo,
-      name,
+      name: stripCardCodePrefix(name) || employeeNo,
+      cardCode,
       isPlaceholder: false,
       ...normalizeMemberValidity(userInfo?.Valid, now),
     };
@@ -314,17 +401,20 @@ export async function syncAllMembers({
             card_no: cardNo,
             employee_no: null,
             status: 'available',
+            card_code: matchedPlaceholderUser.cardCode ?? null,
           }
         : matchedMember
         ? {
             card_no: cardNo,
             employee_no: matchedMember.employeeNo,
             status: 'assigned',
+            card_code: matchedMember.cardCode ?? null,
           }
         : {
             card_no: cardNo,
             employee_no: null,
             status: 'available',
+            card_code: null,
           }
     );
   }
