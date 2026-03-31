@@ -89,7 +89,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
  *   get_user      - payload: { employeeNo }
  *   add_card      - payload: { employeeNo, cardNo }
  *   revoke_card   - payload: { employeeNo, cardNo }
- *   get_card      - payload: { employeeNo }
+ *   get_card      - payload: { cardNo } or { employeeNo }
  *   list_available_cards - payload: {}
  *   list_available_slots - payload: {}
  *   sync_all_members - payload: {}
@@ -148,7 +148,7 @@ export async function processJob(job, hikApi = hik) {
     }
 
     case 'get_card': {
-      const result = await hikApi.getCard(payload.employeeNo);
+      const result = await hikApi.getCard(payload);
       return { success: true, result };
     }
 

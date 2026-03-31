@@ -11,7 +11,7 @@ create table if not exists public.access_control_jobs (
   --   'get_user'     - payload: { employeeNo }
   --   'add_card'     - payload: { employeeNo, cardNo }
   --   'revoke_card'  - payload: { employeeNo, cardNo }
-  --   'get_card'     - payload: { employeeNo }
+  --   'get_card'     - payload: { cardNo } or { employeeNo }
   --   'list_available_cards' - payload: {}
   --   'list_available_slots' - payload: {}
   --   'reset_slot'   - payload: { employeeNo, placeholderName }

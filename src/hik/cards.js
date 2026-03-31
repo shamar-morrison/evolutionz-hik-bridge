@@ -33,7 +33,18 @@ export async function revokeCard(employeeNo, cardNo) {
   });
 }
 
-export async function getCard(employeeNo) {
+export async function getCard(input) {
+  const employeeNo =
+    typeof input === 'string'
+      ? input
+      : typeof input?.employeeNo === 'string'
+        ? input.employeeNo
+        : null;
+  const cardNo =
+    typeof input === 'object' && input !== null && typeof input.cardNo === 'string'
+      ? input.cardNo
+      : null;
+
   return await performIsapiRequest('/ISAPI/AccessControl/CardInfo/Search?format=json', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -42,7 +53,16 @@ export async function getCard(employeeNo) {
         searchID: '1',
         searchResultPosition: 0,
         maxResults: 10,
-        EmployeeNoList: [{ employeeNo: String(employeeNo) }],
+        ...(employeeNo
+          ? {
+              EmployeeNoList: [{ employeeNo: String(employeeNo) }],
+            }
+          : {}),
+        ...(cardNo
+          ? {
+              CardNoList: [{ cardNo: String(cardNo) }],
+            }
+          : {}),
       },
     }),
   });

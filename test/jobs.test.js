@@ -46,6 +46,31 @@ test('processJob dispatches list_available_cards jobs', async () => {
   });
 });
 
+test('processJob dispatches get_card jobs with card numbers', async () => {
+  const calls = [];
+  const hikApi = {
+    getCard: async (payload) => {
+      calls.push(payload);
+      return { ok: true };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-get-card',
+      type: 'get_card',
+      payload: { cardNo: '0102857149' },
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [{ cardNo: '0102857149' }]);
+  assert.deepEqual(result, {
+    success: true,
+    result: { ok: true },
+  });
+});
+
 test('processJob dispatches list_available_slots jobs', async () => {
   const hikApi = {
     listAvailableSlots: async () => ({

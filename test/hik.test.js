@@ -634,6 +634,66 @@ test('addCard uses PUT CardInfo/SetUp to assign an existing card', async () => {
   }
 });
 
+test('getCard uses POST CardInfo/Search with CardNoList when looking up by card number', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.getCard({ cardNo: 'EF-009999' });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/CardInfo/Search?format=json');
+    assert.deepEqual(payload, {
+      CardInfoSearchCond: {
+        searchID: '1',
+        searchResultPosition: 0,
+        maxResults: 10,
+        CardNoList: [{ cardNo: 'EF-009999' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('getCard still supports employee number lookups', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.getCard({ employeeNo: '00000611' });
+
+    assert.equal(result.ok, true);
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/CardInfo/Search?format=json');
+    assert.deepEqual(payload, {
+      CardInfoSearchCond: {
+        searchID: '1',
+        searchResultPosition: 0,
+        maxResults: 10,
+        EmployeeNoList: [{ employeeNo: '00000611' }],
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
 test('listAvailableCards paginates card search and returns only unassigned cards', async () => {
   const device = createAuthorizedApiServer(({ res, body }) => {
     const payload = JSON.parse(body);
