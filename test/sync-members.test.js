@@ -73,9 +73,25 @@ function createFakeSupabase({
   existingCards = [],
 } = {}) {
   const insertedMembersPayloads = [];
+  const updatedMembersPayloads = [];
   const insertedCardsPayloads = [];
   const updatedCardsPayloads = [];
-  const seenMembers = new Set(existingMembers);
+  const membersTable = new Map(
+    existingMembers.map((member) => {
+      if (typeof member === 'string') {
+        return [member, { employee_no: member, name: '' }];
+      }
+
+      return [
+        member.employee_no,
+        {
+          employee_no: member.employee_no,
+          name: member.name ?? '',
+          updated_at: member.updated_at ?? null,
+        },
+      ];
+    })
+  );
   const cardsTable = new Map(
     existingCards.map((card) => {
       const normalizedCard = normalizeExistingCard(card);
@@ -85,13 +101,37 @@ function createFakeSupabase({
 
   return {
     insertedMembersPayloads,
+    updatedMembersPayloads,
     insertedCardsPayloads,
     updatedCardsPayloads,
+    membersTable,
     cardsTable,
     client: {
       from(table) {
         if (table === 'members') {
           return {
+            select(columns) {
+              assert.equal(columns, 'employee_no, name');
+
+              return {
+                in(column, values) {
+                  assert.equal(column, 'employee_no');
+
+                  return Promise.resolve({
+                    data: values
+                      .filter((value) => membersTable.has(value))
+                      .map((value) => {
+                        const member = membersTable.get(value);
+                        return {
+                          employee_no: member.employee_no,
+                          name: member.name,
+                        };
+                      }),
+                    error: null,
+                  });
+                },
+              };
+            },
             upsert(rows, options) {
               assert.equal(options.ignoreDuplicates, true);
               assert.equal(options.onConflict, 'employee_no');
@@ -100,17 +140,48 @@ function createFakeSupabase({
               const insertedRows = [];
 
               for (const row of rows) {
-                if (seenMembers.has(row.employee_no)) {
+                if (membersTable.has(row.employee_no)) {
                   continue;
                 }
 
-                seenMembers.add(row.employee_no);
+                membersTable.set(row.employee_no, {
+                  employee_no: row.employee_no,
+                  name: row.name,
+                  updated_at: null,
+                });
                 insertedRows.push({ employee_no: row.employee_no });
               }
 
               return {
                 select() {
                   return Promise.resolve({ data: insertedRows, error: null });
+                },
+              };
+            },
+            update(values) {
+              return {
+                eq(column, value) {
+                  assert.equal(column, 'employee_no');
+
+                  const member = membersTable.get(value);
+                  const updatedRows = [];
+
+                  if (member) {
+                    member.name = values.name;
+                    member.updated_at = values.updated_at;
+                    updatedMembersPayloads.push({
+                      employee_no: value,
+                      values,
+                    });
+                    updatedRows.push({ employee_no: value });
+                  }
+
+                  return {
+                    select(selectColumns) {
+                      assert.equal(selectColumns, 'employee_no');
+                      return Promise.resolve({ data: updatedRows, error: null });
+                    },
+                  };
                 },
               };
             },
@@ -404,5 +475,63 @@ test('syncAllMembers backfills missing card codes on rerun without changing assi
     employee_no: '0001',
     status: 'assigned',
     updated_at: supabase.cardsTable.get('CARD-1').updated_at,
+  });
+});
+
+test('syncAllMembers normalizes existing prefixed member names on rerun', async () => {
+  const users = [
+    {
+      employeeNo: '0001',
+      name: 'J11 Trishana Baker',
+      Valid: {
+        enable: true,
+        endTime: '2026-07-15T23:59:59',
+      },
+    },
+  ];
+  const cards = [{ employeeNo: '0001', cardNo: 'CARD-1' }];
+  const userSearch = createPagedUserSearch(users);
+  const cardSearch = createPagedCardSearch(cards);
+  const supabase = createFakeSupabase({
+    existingMembers: [
+      {
+        employee_no: '0001',
+        name: 'J11 Trishana Baker',
+      },
+    ],
+    existingCards: [
+      {
+        card_no: 'CARD-1',
+        card_code: 'J11',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+    ],
+  });
+
+  const result = await syncAllMembers({
+    searchUsersFn: userSearch.fn,
+    searchCardsFn: cardSearch.fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersImported: 1,
+    cardsImported: 0,
+    placeholderSlotsSkipped: 0,
+  });
+  assert.deepEqual(supabase.updatedMembersPayloads, [
+    {
+      employee_no: '0001',
+      values: {
+        name: 'Trishana Baker',
+        updated_at: supabase.membersTable.get('0001').updated_at,
+      },
+    },
+  ]);
+  assert.deepEqual(supabase.membersTable.get('0001'), {
+    employee_no: '0001',
+    name: 'Trishana Baker',
+    updated_at: supabase.membersTable.get('0001').updated_at,
   });
 });

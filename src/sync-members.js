@@ -216,19 +216,75 @@ async function insertMembers(supabase, members) {
     return [];
   }
 
-  const { data, error } = await supabase
+  const employeeNos = members.map((member) => member.employee_no);
+  const membersByEmployeeNo = new Map(members.map((member) => [member.employee_no, member]));
+  const { data: existingMembers, error: existingMembersError } = await supabase
     .from('members')
-    .upsert(members, {
-      onConflict: 'employee_no',
-      ignoreDuplicates: true,
-    })
-    .select('employee_no');
+    .select('employee_no, name')
+    .in('employee_no', employeeNos);
 
-  if (error) {
-    throw new Error(`Failed to sync members into Supabase: ${error.message}`);
+  if (existingMembersError) {
+    throw new Error(`Failed to read existing members from Supabase: ${existingMembersError.message}`);
   }
 
-  return Array.isArray(data) ? data : [];
+  const existingMembersByEmployeeNo = new Map(
+    (Array.isArray(existingMembers) ? existingMembers : []).map((member) => [
+      normalizeText(member.employee_no),
+      normalizeText(member.name),
+    ])
+  );
+  const newMembers = members.filter((member) => !existingMembersByEmployeeNo.has(member.employee_no));
+  let insertedRows = [];
+
+  if (newMembers.length > 0) {
+    const { data, error } = await supabase
+      .from('members')
+      .upsert(newMembers, {
+        onConflict: 'employee_no',
+        ignoreDuplicates: true,
+      })
+      .select('employee_no');
+
+    if (error) {
+      throw new Error(`Failed to sync members into Supabase: ${error.message}`);
+    }
+
+    insertedRows = Array.isArray(data) ? data : [];
+  }
+
+  const updatedRows = [];
+  const updatedAt = new Date().toISOString();
+
+  for (const [employeeNo, existingName] of existingMembersByEmployeeNo.entries()) {
+    const incomingMember = membersByEmployeeNo.get(employeeNo);
+
+    if (!incomingMember || !existingName || existingName === incomingMember.name) {
+      continue;
+    }
+
+    if (stripCardCodePrefix(existingName) !== incomingMember.name) {
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from('members')
+      .update({
+        name: incomingMember.name,
+        updated_at: updatedAt,
+      })
+      .eq('employee_no', employeeNo)
+      .select('employee_no');
+
+    if (error) {
+      throw new Error(`Failed to normalize member names in Supabase: ${error.message}`);
+    }
+
+    if (Array.isArray(data)) {
+      updatedRows.push(...data);
+    }
+  }
+
+  return [...insertedRows, ...updatedRows];
 }
 
 async function insertCards(supabase, cards) {
