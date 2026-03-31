@@ -132,8 +132,8 @@ test('syncAllMembers paginates device data, skips placeholder members, and persi
       employeeNo: '0002',
       name: 'B3',
       Valid: {
-        enable: true,
-        endTime: '2037-12-31T23:59:59',
+        enable: false,
+        endTime: '2020-01-01T00:00:00',
       },
     },
     {

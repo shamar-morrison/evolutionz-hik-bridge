@@ -223,7 +223,8 @@ export async function syncAllMembers({
   const users = await fetchAllUsers({ searchUsersFn, maxResults });
   const cards = await fetchAllCards({ searchCardsFn, maxResults });
 
-  const usersByCanonicalEmployeeNo = new Map();
+  const placeholderUsersByCanonicalEmployeeNo = new Map();
+  const membersByCanonicalEmployeeNo = new Map();
   const primaryCardByCanonicalEmployeeNo = new Map();
   const cardsByNumber = new Map();
 
@@ -236,16 +237,38 @@ export async function syncAllMembers({
     }
 
     const name = normalizeText(userInfo?.name);
-    const userRecord = {
+    const isPlaceholder = isPlaceholderName(name);
+
+    if (isPlaceholder) {
+      const placeholderRecord = {
+        canonicalEmployeeNo,
+        employeeNo,
+        name,
+        isPlaceholder: true,
+      };
+
+      if (
+        shouldReplaceUserRecord(
+          placeholderUsersByCanonicalEmployeeNo.get(canonicalEmployeeNo),
+          placeholderRecord
+        )
+      ) {
+        placeholderUsersByCanonicalEmployeeNo.set(canonicalEmployeeNo, placeholderRecord);
+      }
+
+      continue;
+    }
+
+    const memberRecord = {
       canonicalEmployeeNo,
       employeeNo,
       name,
-      isPlaceholder: isPlaceholderName(name),
+      isPlaceholder: false,
       ...normalizeMemberValidity(userInfo?.Valid, now),
     };
 
-    if (shouldReplaceUserRecord(usersByCanonicalEmployeeNo.get(canonicalEmployeeNo), userRecord)) {
-      usersByCanonicalEmployeeNo.set(canonicalEmployeeNo, userRecord);
+    if (shouldReplaceUserRecord(membersByCanonicalEmployeeNo.get(canonicalEmployeeNo), memberRecord)) {
+      membersByCanonicalEmployeeNo.set(canonicalEmployeeNo, memberRecord);
     }
   }
 
@@ -258,10 +281,14 @@ export async function syncAllMembers({
 
     const rawEmployeeNo = normalizeText(cardInfo?.employeeNo);
     const canonicalEmployeeNo = canonicalizeEmployeeNo(rawEmployeeNo);
-    const matchedUser =
-      canonicalEmployeeNo ? usersByCanonicalEmployeeNo.get(canonicalEmployeeNo) ?? null : null;
+    const matchedPlaceholderUser =
+      canonicalEmployeeNo
+        ? placeholderUsersByCanonicalEmployeeNo.get(canonicalEmployeeNo) ?? null
+        : null;
+    const matchedMember =
+      canonicalEmployeeNo ? membersByCanonicalEmployeeNo.get(canonicalEmployeeNo) ?? null : null;
 
-    if (matchedUser && !matchedUser.isPlaceholder) {
+    if (matchedMember) {
       const currentPrimaryCardNo = primaryCardByCanonicalEmployeeNo.get(canonicalEmployeeNo);
 
       if (!currentPrimaryCardNo || cardNo.localeCompare(currentPrimaryCardNo) < 0) {
@@ -271,10 +298,16 @@ export async function syncAllMembers({
 
     upsertCardRow(
       cardsByNumber,
-      matchedUser && !matchedUser.isPlaceholder
+      matchedPlaceholderUser
         ? {
             card_no: cardNo,
-            employee_no: matchedUser.employeeNo,
+            employee_no: null,
+            status: 'available',
+          }
+        : matchedMember
+        ? {
+            card_no: cardNo,
+            employee_no: matchedMember.employeeNo,
             status: 'assigned',
           }
         : {
@@ -288,12 +321,9 @@ export async function syncAllMembers({
   let placeholderSlotsSkipped = 0;
   const members = [];
 
-  for (const userRecord of usersByCanonicalEmployeeNo.values()) {
-    if (userRecord.isPlaceholder) {
-      placeholderSlotsSkipped += 1;
-      continue;
-    }
+  placeholderSlotsSkipped = placeholderUsersByCanonicalEmployeeNo.size;
 
+  for (const userRecord of membersByCanonicalEmployeeNo.values()) {
     members.push({
       employee_no: userRecord.employeeNo,
       name: userRecord.name || userRecord.employeeNo,
