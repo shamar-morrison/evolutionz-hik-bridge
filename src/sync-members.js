@@ -90,7 +90,7 @@ async function fetchAllUsers({ searchUsersFn, maxResults }) {
 
 async function fetchAllCards({ searchCardsFn, maxResults }) {
   const cards = [];
-  const searchID = `evolutionz-sync-cards-${Date.now()}`;
+  const searchID = '1';
   let searchResultPosition = 0;
 
   while (true) {
