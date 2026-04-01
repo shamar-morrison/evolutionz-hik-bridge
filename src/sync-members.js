@@ -487,7 +487,7 @@ export async function syncAllMembers({
       card_no: primaryCardByCanonicalEmployeeNo.get(userRecord.canonicalEmployeeNo) ?? null,
       type: 'General',
       status: userRecord.status,
-      expiry: userRecord.expiry,
+      end_time: userRecord.expiry,
       balance: 0,
     });
   }

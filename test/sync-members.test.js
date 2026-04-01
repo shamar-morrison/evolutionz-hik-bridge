@@ -358,7 +358,7 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       card_no: 'CARD-1',
       type: 'General',
       status: 'Active',
-      expiry: new Date('2026-07-15T23:59:59').toISOString(),
+      end_time: new Date('2026-07-15T23:59:59').toISOString(),
       balance: 0,
     },
     {
@@ -367,7 +367,7 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       card_no: 'EXPIRED-CARD',
       type: 'General',
       status: 'Expired',
-      expiry: new Date('2020-01-01T00:00:00').toISOString(),
+      end_time: new Date('2020-01-01T00:00:00').toISOString(),
       balance: 0,
     },
     {
@@ -376,7 +376,7 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       card_no: null,
       type: 'General',
       status: 'Expired',
-      expiry: null,
+      end_time: null,
       balance: 0,
     },
   ]);
