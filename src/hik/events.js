@@ -18,11 +18,8 @@ export async function getMemberEvents({
         searchResultPosition,
         maxResults,
         major: 5,
-        ...(normalizedEmployeeNoString
-          ? {
-              employeeNoString: normalizedEmployeeNoString,
-            }
-          : {}),
+        minor: 0,
+        employeeNoString: normalizedEmployeeNoString,
       },
     }),
   });

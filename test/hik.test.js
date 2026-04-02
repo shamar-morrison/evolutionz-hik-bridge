@@ -386,6 +386,7 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
         searchResultPosition: 40,
         maxResults: 20,
         major: 5,
+        minor: 0,
         employeeNoString: '00000611',
       },
     });
