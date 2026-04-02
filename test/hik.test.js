@@ -380,9 +380,11 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
 
     assert.equal(request.method, 'POST');
     assert.equal(request.route, '/ISAPI/AccessControl/AcsEvent?format=json');
+    assert.equal(typeof payload?.AcsEventCond?.searchID, 'string');
+    assert.ok(payload.AcsEventCond.searchID.length > 0);
     assert.deepEqual(payload, {
       AcsEventCond: {
-        searchID: '1',
+        searchID: payload.AcsEventCond.searchID,
         searchResultPosition: 40,
         maxResults: 20,
         major: 5,

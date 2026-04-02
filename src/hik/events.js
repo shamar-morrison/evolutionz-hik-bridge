@@ -11,13 +11,14 @@ export async function getMemberEvents({
 }) {
   const normalizedEmployeeNoString =
     typeof employeeNoString === 'string' ? employeeNoString.trim() : '';
+  const searchID = Date.now().toString();
 
   const response = await performIsapiRequest('/ISAPI/AccessControl/AcsEvent?format=json', {
     method: 'POST',
     headers: jsonHeaders(),
     body: JSON.stringify({
       AcsEventCond: {
-        searchID: '1',
+        searchID,
         searchResultPosition,
         maxResults,
         major: 5,
