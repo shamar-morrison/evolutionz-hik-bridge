@@ -61,6 +61,7 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
             card_no: null,
             type: 'General',
             status: 'Active',
+            begin_time: null,
             end_time: null,
             gender: null,
             phone: null,
@@ -78,6 +79,7 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
           card_no: member.card_no ?? null,
           type: member.type ?? 'General',
           status: member.status ?? 'Active',
+          begin_time: member.begin_time ?? null,
           end_time: member.end_time ?? null,
           gender: member.gender ?? null,
           phone: member.phone ?? null,
@@ -98,7 +100,7 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
             select(columns) {
               assert.equal(
                 columns,
-                'employee_no, name, card_no, type, status, end_time, gender, phone, email, remark'
+                'employee_no, name, card_no, type, status, begin_time, end_time, gender, phone, email, remark'
               );
 
               return {
@@ -116,6 +118,7 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
                           card_no: member.card_no,
                           type: member.type,
                           status: member.status,
+                          begin_time: member.begin_time,
                           end_time: member.end_time,
                           gender: member.gender,
                           phone: member.phone,
@@ -143,7 +146,8 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
                   card_no: row.card_no ?? null,
                   type: row.type,
                   status: row.status,
-                  end_time: row.end_time ?? null,
+                  begin_time: row.begin_time ?? existingMember?.begin_time ?? null,
+                  end_time: row.end_time ?? existingMember?.end_time ?? null,
                   gender: row.gender ?? existingMember?.gender ?? null,
                   phone: row.phone ?? existingMember?.phone ?? null,
                   email: row.email ?? existingMember?.email ?? null,
@@ -174,6 +178,7 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       name: 'A1 Alice Brown',
       Valid: {
         enable: true,
+        beginTime: '2026-01-15T00:00:00',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -190,6 +195,7 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       name: 'C4 Expired Eve',
       Valid: {
         enable: true,
+        beginTime: '2025-12-01T00:00:00',
         endTime: '2020-01-01T00:00:00',
       },
     },
@@ -241,6 +247,7 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       card_no: 'CARD-1',
       type: 'General',
       status: 'Active',
+      begin_time: new Date('2026-01-15T00:00:00').toISOString(),
       end_time: new Date('2026-07-15T23:59:59').toISOString(),
     },
     {
@@ -249,6 +256,7 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       card_no: 'EXPIRED-CARD',
       type: 'General',
       status: 'Expired',
+      begin_time: new Date('2025-12-01T00:00:00').toISOString(),
       end_time: new Date('2020-01-01T00:00:00').toISOString(),
     },
     {
@@ -257,7 +265,6 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       card_no: null,
       type: 'General',
       status: 'Expired',
-      end_time: null,
     },
   ]);
 });
@@ -269,6 +276,7 @@ test('syncAllMembers skips unchanged members on rerun', async () => {
       name: 'A1 Alice Brown',
       Valid: {
         enable: true,
+        beginTime: '2026-01-15T00:00:00',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -307,6 +315,7 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
       name: 'J11 Trishana Baker',
       Valid: {
         enable: true,
+        beginTime: '2026-01-24T00:00:00',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -319,6 +328,7 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
       {
         employee_no: '0001',
         name: 'J11 Trishana Baker',
+        begin_time: '2025-12-31T00:00:00.000Z',
       },
     ],
   });
@@ -341,6 +351,7 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
         card_no: 'CARD-1',
         type: 'General',
         status: 'Active',
+        begin_time: new Date('2026-01-24T00:00:00').toISOString(),
         end_time: new Date('2026-07-15T23:59:59').toISOString(),
       },
     ],
@@ -351,6 +362,7 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
     card_no: 'CARD-1',
     type: 'General',
     status: 'Active',
+    begin_time: new Date('2026-01-24T00:00:00').toISOString(),
     end_time: new Date('2026-07-15T23:59:59').toISOString(),
     gender: null,
     phone: null,
@@ -371,6 +383,7 @@ test('syncAllMembers maps gender, phone, email, and remark from Hik users', asyn
       remark: 'VIP',
       Valid: {
         enable: true,
+        beginTime: '2026-02-01T00:00:00',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -396,6 +409,7 @@ test('syncAllMembers maps gender, phone, email, and remark from Hik users', asyn
         card_no: 'CARD-501',
         type: 'General',
         status: 'Active',
+        begin_time: new Date('2026-02-01T00:00:00').toISOString(),
         end_time: new Date('2026-07-15T23:59:59').toISOString(),
         gender: 'Male',
         phone: '876-555-1000',
@@ -417,6 +431,7 @@ test('syncAllMembers reads gender, phone, email, and remark from alias fields', 
       Remark: 'Monthly',
       Valid: {
         enable: true,
+        beginTime: '2026-02-15T00:00:00',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -442,6 +457,7 @@ test('syncAllMembers reads gender, phone, email, and remark from alias fields', 
         card_no: 'CARD-602',
         type: 'General',
         status: 'Active',
+        begin_time: new Date('2026-02-15T00:00:00').toISOString(),
         end_time: new Date('2026-07-15T23:59:59').toISOString(),
         gender: 'Female',
         phone: '876-555-0602',
@@ -464,6 +480,7 @@ test('syncAllMembers preserves existing profile data when the device returns bla
       remark: '',
       Valid: {
         enable: false,
+        beginTime: ' ',
         endTime: '2026-07-15T23:59:59',
       },
     },
@@ -477,6 +494,7 @@ test('syncAllMembers preserves existing profile data when the device returns bla
         card_no: 'OLD-CARD',
         type: 'Student/BPO',
         status: 'Active',
+        begin_time: '2026-01-01T00:00:00.000Z',
         end_time: '2025-07-15T23:59:59.000Z',
         gender: 'Female',
         phone: '876-555-0700',
@@ -504,6 +522,7 @@ test('syncAllMembers preserves existing profile data when the device returns bla
         card_no: 'CARD-700',
         type: 'Student/BPO',
         status: 'Expired',
+        begin_time: '2026-01-01T00:00:00.000Z',
         end_time: new Date('2026-07-15T23:59:59').toISOString(),
         gender: 'Female',
         phone: '876-555-0700',
@@ -518,10 +537,116 @@ test('syncAllMembers preserves existing profile data when the device returns bla
     card_no: 'CARD-700',
     type: 'Student/BPO',
     status: 'Expired',
+    begin_time: '2026-01-01T00:00:00.000Z',
     end_time: new Date('2026-07-15T23:59:59').toISOString(),
     gender: 'Female',
     phone: '876-555-0700',
     email: 'member700@example.com',
     remark: 'Existing note',
   });
+});
+
+test('syncAllMembers preserves existing end_time when the device returns a blank validity end time', async () => {
+  const users = [
+    {
+      employeeNo: '0710',
+      name: 'Member End',
+      Valid: {
+        enable: false,
+        beginTime: '2025-01-01T00:00:00',
+        endTime: ' ',
+      },
+    },
+  ];
+  const cards = [{ employeeNo: '0710', cardNo: 'CARD-710' }];
+  const supabase = createFakeSupabase({
+    existingMembers: [
+      {
+        employee_no: '0710',
+        name: 'Member End',
+        card_no: 'CARD-710',
+        type: 'General',
+        status: 'Expired',
+        begin_time: new Date('2025-01-01T00:00:00').toISOString(),
+        end_time: '2025-04-30T23:59:59.000Z',
+      },
+    ],
+  });
+
+  const result = await syncAllMembers({
+    searchUsersFn: createPagedUserSearch(users).fn,
+    searchCardsFn: createPagedCardSearch(cards).fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersAdded: 0,
+    membersUpdated: 0,
+  });
+  assert.deepEqual(supabase.upsertedMembersPayloads, []);
+  assert.deepEqual(supabase.membersTable.get('0710'), {
+    employee_no: '0710',
+    name: 'Member End',
+    card_no: 'CARD-710',
+    type: 'General',
+    status: 'Expired',
+    begin_time: new Date('2025-01-01T00:00:00').toISOString(),
+    end_time: '2025-04-30T23:59:59.000Z',
+    gender: null,
+    phone: null,
+    email: null,
+    remark: null,
+  });
+});
+
+test('syncAllMembers counts begin_time-only changes as member updates', async () => {
+  const users = [
+    {
+      employeeNo: '0720',
+      name: 'Member Begin',
+      Valid: {
+        enable: true,
+        beginTime: '2026-02-01T00:00:00',
+        endTime: '2026-07-15T23:59:59',
+      },
+    },
+  ];
+  const cards = [{ employeeNo: '0720', cardNo: 'CARD-720' }];
+  const supabase = createFakeSupabase({
+    existingMembers: [
+      {
+        employee_no: '0720',
+        name: 'Member Begin',
+        card_no: 'CARD-720',
+        type: 'General',
+        status: 'Active',
+        begin_time: '2026-01-01T00:00:00.000Z',
+        end_time: '2026-07-15T23:59:59.000Z',
+      },
+    ],
+  });
+
+  const result = await syncAllMembers({
+    searchUsersFn: createPagedUserSearch(users).fn,
+    searchCardsFn: createPagedCardSearch(cards).fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersAdded: 0,
+    membersUpdated: 1,
+  });
+  assert.deepEqual(supabase.upsertedMembersPayloads, [
+    [
+      {
+        employee_no: '0720',
+        name: 'Member Begin',
+        card_no: 'CARD-720',
+        type: 'General',
+        status: 'Active',
+        begin_time: new Date('2026-02-01T00:00:00').toISOString(),
+        end_time: new Date('2026-07-15T23:59:59').toISOString(),
+      },
+    ],
+  ]);
 });

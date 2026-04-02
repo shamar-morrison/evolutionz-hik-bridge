@@ -192,18 +192,21 @@ function isPlaceholderName(name) {
 }
 
 function normalizeMemberValidity(valid, now) {
+  const beginDate = parseDeviceTimestamp(valid?.beginTime);
   const expiryDate = parseDeviceTimestamp(valid?.endTime);
 
   if (!toBoolean(valid?.enable, false) || !expiryDate || expiryDate.getTime() < now.getTime()) {
     return {
       status: 'Expired',
-      expiry: expiryDate ? expiryDate.toISOString() : null,
+      begin_time: beginDate ? beginDate.toISOString() : null,
+      end_time: expiryDate ? expiryDate.toISOString() : null,
     };
   }
 
   return {
     status: 'Active',
-    expiry: expiryDate.toISOString(),
+    begin_time: beginDate ? beginDate.toISOString() : null,
+    end_time: expiryDate.toISOString(),
   };
 }
 
@@ -235,6 +238,8 @@ function resolveMemberName(existingName, nextName) {
 
 function buildSyncedMemberRow(existingMember, incomingMember) {
   const nextName = resolveMemberName(existingMember?.name, incomingMember.name);
+  const nextBeginTime = resolveProfileFieldValue(existingMember?.begin_time, incomingMember.begin_time);
+  const nextEndTime = resolveProfileFieldValue(existingMember?.end_time, incomingMember.end_time);
   const nextGender = resolveProfileFieldValue(existingMember?.gender, incomingMember.gender);
   const nextPhone = resolveProfileFieldValue(existingMember?.phone, incomingMember.phone);
   const nextEmail = resolveProfileFieldValue(existingMember?.email, incomingMember.email);
@@ -246,7 +251,8 @@ function buildSyncedMemberRow(existingMember, incomingMember) {
     card_no: incomingMember.card_no,
     type: normalizeText(existingMember?.type) || incomingMember.type,
     status: incomingMember.status,
-    end_time: incomingMember.end_time,
+    ...(nextBeginTime ? { begin_time: nextBeginTime } : {}),
+    ...(nextEndTime ? { end_time: nextEndTime } : {}),
     ...(nextGender ? { gender: nextGender } : {}),
     ...(nextPhone ? { phone: nextPhone } : {}),
     ...(nextEmail ? { email: nextEmail } : {}),
@@ -264,6 +270,7 @@ function hasMemberRowChanged(existingMember, nextMemberRow) {
     normalizeText(existingMember.card_no) !== normalizeText(nextMemberRow.card_no) ||
     normalizeText(existingMember.type) !== normalizeText(nextMemberRow.type) ||
     normalizeText(existingMember.status) !== normalizeText(nextMemberRow.status) ||
+    normalizeNullableText(existingMember.begin_time) !== normalizeNullableText(nextMemberRow.begin_time) ||
     normalizeNullableText(existingMember.end_time) !== normalizeNullableText(nextMemberRow.end_time) ||
     normalizeNullableText(existingMember.gender) !== normalizeNullableText(nextMemberRow.gender) ||
     normalizeNullableText(existingMember.phone) !== normalizeNullableText(nextMemberRow.phone) ||
@@ -280,7 +287,7 @@ async function insertMembers(supabase, members) {
   const employeeNos = members.map((member) => member.employee_no);
   const { data: existingMembers, error: existingMembersError } = await supabase
     .from('members')
-    .select('employee_no, name, card_no, type, status, end_time, gender, phone, email, remark')
+    .select('employee_no, name, card_no, type, status, begin_time, end_time, gender, phone, email, remark')
     .in('employee_no', employeeNos);
 
   if (existingMembersError) {
@@ -296,6 +303,7 @@ async function insertMembers(supabase, members) {
         card_no: normalizeNullableText(member.card_no),
         type: normalizeText(member.type),
         status: normalizeText(member.status),
+        begin_time: normalizeNullableText(member.begin_time),
         end_time: normalizeNullableText(member.end_time),
         gender: normalizeNullableText(member.gender),
         phone: normalizeNullableText(member.phone),
@@ -422,7 +430,8 @@ export async function syncAllMembers({
       card_no: primaryCardByCanonicalEmployeeNo.get(userRecord.canonicalEmployeeNo) ?? null,
       type: 'General',
       status: userRecord.status,
-      end_time: userRecord.expiry,
+      ...(userRecord.begin_time ? { begin_time: userRecord.begin_time } : {}),
+      ...(userRecord.end_time ? { end_time: userRecord.end_time } : {}),
       ...(userRecord.gender ? { gender: userRecord.gender } : {}),
       ...(userRecord.phone ? { phone: userRecord.phone } : {}),
       ...(userRecord.email ? { email: userRecord.email } : {}),
