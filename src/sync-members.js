@@ -33,6 +33,27 @@ function normalizeMemberGender(value) {
   return null;
 }
 
+function getFirstNormalizedAlias(source, keys) {
+  for (const key of keys) {
+    const value = normalizeNullableText(source?.[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function extractMemberProfile(userInfo) {
+  return {
+    gender: normalizeMemberGender(getFirstNormalizedAlias(userInfo, ['gender', 'sex'])),
+    phone: getFirstNormalizedAlias(userInfo, ['phoneNo', 'Tel', 'tel', 'phone', 'phoneNumber']),
+    email: getFirstNormalizedAlias(userInfo, ['email', 'Email']),
+    remark: getFirstNormalizedAlias(userInfo, ['remark', 'Remark']),
+  };
+}
+
 function resolveProfileFieldValue(existingValue, nextValue) {
   return normalizeNullableText(nextValue) ?? normalizeNullableText(existingValue);
 }
@@ -153,17 +174,6 @@ async function fetchAllCards({ searchCardsFn, maxResults }) {
 
     cards.push(...page.items);
 
-    console.info('[hik] syncAllMembers card page trace', {
-      searchResultPosition,
-      pageCardCount: page.items.length,
-      totalCardsSoFar: cards.length,
-      containsTargetCardInPage: page.items.some(
-        (card) => String(card?.cardNo ?? '').trim() === '3582702940'
-      ),
-      shouldContinue: page.shouldContinue,
-      responseStatusStrg: searchMetadata.responseStatusStrg,
-    });
-
     if (!page.shouldContinue) {
       break;
     }
@@ -197,12 +207,8 @@ function normalizeMemberValidity(valid, now) {
   };
 }
 
-function shouldReplaceUserRecord(existingRecord, nextRecord) {
+function shouldReplaceMemberRecord(existingRecord, nextRecord) {
   if (!existingRecord) {
-    return true;
-  }
-
-  if (existingRecord.isPlaceholder && !nextRecord.isPlaceholder) {
     return true;
   }
 
@@ -266,30 +272,9 @@ function hasMemberRowChanged(existingMember, nextMemberRow) {
   );
 }
 
-function upsertCardRow(cardsByNumber, nextCardRow) {
-  const existingCardRow = cardsByNumber.get(nextCardRow.card_no);
-
-  if (!existingCardRow) {
-    cardsByNumber.set(nextCardRow.card_no, nextCardRow);
-    return;
-  }
-
-  if (existingCardRow.status === 'available' && nextCardRow.status === 'assigned') {
-    cardsByNumber.set(nextCardRow.card_no, nextCardRow);
-    return;
-  }
-
-  if (!existingCardRow.card_code && nextCardRow.card_code) {
-    cardsByNumber.set(nextCardRow.card_no, {
-      ...existingCardRow,
-      card_code: nextCardRow.card_code,
-    });
-  }
-}
-
 async function insertMembers(supabase, members) {
   if (members.length === 0) {
-    return [];
+    return { membersAdded: 0, membersUpdated: 0 };
   }
 
   const employeeNos = members.map((member) => member.employee_no);
@@ -319,20 +304,33 @@ async function insertMembers(supabase, members) {
       },
     ])
   );
-  const upsertMembers = members
-    .map((member) => {
-      const existingMember = existingMembersByEmployeeNo.get(member.employee_no);
-      const nextMemberRow = buildSyncedMemberRow(existingMember, member);
+  const upsertMembers = [];
+  let membersAdded = 0;
+  let membersUpdated = 0;
 
-      return hasMemberRowChanged(existingMember, nextMemberRow) ? nextMemberRow : null;
-    })
-    .filter(Boolean);
+  for (const member of members) {
+    const existingMember = existingMembersByEmployeeNo.get(member.employee_no);
+    const nextMemberRow = buildSyncedMemberRow(existingMember, member);
 
-  if (upsertMembers.length === 0) {
-    return [];
+    if (!existingMember) {
+      membersAdded += 1;
+      upsertMembers.push(nextMemberRow);
+      continue;
+    }
+
+    if (!hasMemberRowChanged(existingMember, nextMemberRow)) {
+      continue;
+    }
+
+    membersUpdated += 1;
+    upsertMembers.push(nextMemberRow);
   }
 
-  const { data, error } = await supabase
+  if (upsertMembers.length === 0) {
+    return { membersAdded: 0, membersUpdated: 0 };
+  }
+
+  const { error } = await supabase
     .from('members')
     .upsert(upsertMembers, {
       onConflict: 'employee_no',
@@ -344,84 +342,7 @@ async function insertMembers(supabase, members) {
     throw new Error(`Failed to sync members into Supabase: ${error.message}`);
   }
 
-  return Array.isArray(data) ? data : [];
-}
-
-async function insertCards(supabase, cards) {
-  if (cards.length === 0) {
-    return [];
-  }
-
-  const cardNos = cards.map((card) => card.card_no);
-  const cardsByNumber = new Map(cards.map((card) => [card.card_no, card]));
-  const { data: existingCards, error: existingCardsError } = await supabase
-    .from('cards')
-    .select('card_no, card_code')
-    .in('card_no', cardNos);
-
-  if (existingCardsError) {
-    throw new Error(`Failed to read existing cards from Supabase: ${existingCardsError.message}`);
-  }
-
-  const existingCardsByNumber = new Map(
-    (Array.isArray(existingCards) ? existingCards : []).map((card) => [
-      normalizeText(card.card_no),
-      {
-        card_no: normalizeText(card.card_no),
-        card_code: normalizeText(card.card_code) || null,
-      },
-    ])
-  );
-  const newCards = cards.filter((card) => !existingCardsByNumber.has(card.card_no));
-  let insertedRows = [];
-
-  if (newCards.length > 0) {
-    const { data, error } = await supabase
-      .from('cards')
-      .upsert(newCards, {
-        onConflict: 'card_no',
-        ignoreDuplicates: true,
-      })
-      .select('card_no');
-
-    if (error) {
-      throw new Error(`Failed to insert new cards into Supabase: ${error.message}`);
-    }
-
-    insertedRows = Array.isArray(data) ? data : [];
-  }
-
-  const updatedRows = [];
-  const updatedAt = new Date().toISOString();
-
-  for (const [cardNo, existingCard] of existingCardsByNumber.entries()) {
-    const incomingCard = cardsByNumber.get(cardNo);
-    const incomingCardCode = normalizeText(incomingCard?.card_code) || null;
-
-    if (existingCard.card_code || !incomingCardCode) {
-      continue;
-    }
-
-    const { data, error } = await supabase
-      .from('cards')
-      .update({
-        card_code: incomingCardCode,
-        updated_at: updatedAt,
-      })
-      .eq('card_no', cardNo)
-      .is('card_code', null)
-      .select('card_no');
-
-    if (error) {
-      throw new Error(`Failed to backfill card codes into Supabase: ${error.message}`);
-    }
-
-    if (Array.isArray(data)) {
-      updatedRows.push(...data);
-    }
-  }
-
-  return [...insertedRows, ...updatedRows];
+  return { membersAdded, membersUpdated };
 }
 
 export async function syncAllMembers({
@@ -434,10 +355,8 @@ export async function syncAllMembers({
   const users = await fetchAllUsers({ searchUsersFn, maxResults });
   const cards = await fetchAllCards({ searchCardsFn, maxResults });
 
-  const placeholderUsersByCanonicalEmployeeNo = new Map();
   const membersByCanonicalEmployeeNo = new Map();
   const primaryCardByCanonicalEmployeeNo = new Map();
-  const cardsByNumber = new Map();
 
   for (const userInfo of users) {
     const employeeNo = normalizeText(userInfo?.employeeNo);
@@ -448,27 +367,8 @@ export async function syncAllMembers({
     }
 
     const name = normalizeText(userInfo?.name);
-    const cardCode = extractCardCode(name);
-    const isPlaceholder = isPlaceholderName(name);
 
-    if (isPlaceholder) {
-      const placeholderRecord = {
-        canonicalEmployeeNo,
-        employeeNo,
-        name,
-        cardCode,
-        isPlaceholder: true,
-      };
-
-      if (
-        shouldReplaceUserRecord(
-          placeholderUsersByCanonicalEmployeeNo.get(canonicalEmployeeNo),
-          placeholderRecord
-        )
-      ) {
-        placeholderUsersByCanonicalEmployeeNo.set(canonicalEmployeeNo, placeholderRecord);
-      }
-
+    if (isPlaceholderName(name)) {
       continue;
     }
 
@@ -476,16 +376,16 @@ export async function syncAllMembers({
       canonicalEmployeeNo,
       employeeNo,
       name: stripCardCodePrefix(name) || employeeNo,
-      cardCode,
-      isPlaceholder: false,
-      gender: normalizeMemberGender(userInfo?.gender),
-      phone: normalizeNullableText(userInfo?.phoneNo) ?? normalizeNullableText(userInfo?.Tel),
-      email: normalizeNullableText(userInfo?.email),
-      remark: normalizeNullableText(userInfo?.remark),
+      ...extractMemberProfile(userInfo),
       ...normalizeMemberValidity(userInfo?.Valid, now),
     };
 
-    if (shouldReplaceUserRecord(membersByCanonicalEmployeeNo.get(canonicalEmployeeNo), memberRecord)) {
+    if (
+      shouldReplaceMemberRecord(
+        membersByCanonicalEmployeeNo.get(canonicalEmployeeNo),
+        memberRecord
+      )
+    ) {
       membersByCanonicalEmployeeNo.set(canonicalEmployeeNo, memberRecord);
     }
   }
@@ -499,50 +399,21 @@ export async function syncAllMembers({
 
     const rawEmployeeNo = normalizeText(cardInfo?.employeeNo);
     const canonicalEmployeeNo = canonicalizeEmployeeNo(rawEmployeeNo);
-    const matchedPlaceholderUser =
-      canonicalEmployeeNo
-        ? placeholderUsersByCanonicalEmployeeNo.get(canonicalEmployeeNo) ?? null
-        : null;
     const matchedMember =
       canonicalEmployeeNo ? membersByCanonicalEmployeeNo.get(canonicalEmployeeNo) ?? null : null;
 
-    if (matchedMember) {
-      const currentPrimaryCardNo = primaryCardByCanonicalEmployeeNo.get(canonicalEmployeeNo);
-
-      if (!currentPrimaryCardNo || cardNo.localeCompare(currentPrimaryCardNo) < 0) {
-        primaryCardByCanonicalEmployeeNo.set(canonicalEmployeeNo, cardNo);
-      }
+    if (!matchedMember) {
+      continue;
     }
 
-    upsertCardRow(
-      cardsByNumber,
-      matchedPlaceholderUser
-        ? {
-            card_no: cardNo,
-            employee_no: null,
-            status: 'available',
-            card_code: matchedPlaceholderUser.cardCode ?? null,
-          }
-        : matchedMember
-        ? {
-            card_no: cardNo,
-            employee_no: matchedMember.employeeNo,
-            status: 'assigned',
-            card_code: matchedMember.cardCode ?? null,
-          }
-        : {
-            card_no: cardNo,
-            employee_no: null,
-            status: 'available',
-            card_code: null,
-          }
-    );
+    const currentPrimaryCardNo = primaryCardByCanonicalEmployeeNo.get(canonicalEmployeeNo);
+
+    if (!currentPrimaryCardNo || cardNo.localeCompare(currentPrimaryCardNo) < 0) {
+      primaryCardByCanonicalEmployeeNo.set(canonicalEmployeeNo, cardNo);
+    }
   }
 
-  let placeholderSlotsSkipped = 0;
   const members = [];
-
-  placeholderSlotsSkipped = placeholderUsersByCanonicalEmployeeNo.size;
 
   for (const userRecord of membersByCanonicalEmployeeNo.values()) {
     members.push({
@@ -559,12 +430,5 @@ export async function syncAllMembers({
     });
   }
 
-  const insertedMembers = await insertMembers(supabase, members);
-  const insertedCards = await insertCards(supabase, Array.from(cardsByNumber.values()));
-
-  return {
-    membersImported: insertedMembers.length,
-    cardsImported: insertedCards.length,
-    placeholderSlotsSkipped,
-  };
+  return await insertMembers(supabase, members);
 }

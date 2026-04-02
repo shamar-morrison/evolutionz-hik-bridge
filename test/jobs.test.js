@@ -126,9 +126,8 @@ test('processJob dispatches sync_all_members jobs', async () => {
     syncAllMembers: async (payload) => {
       calls.push(payload);
       return {
-        membersImported: 3,
-        cardsImported: 4,
-        placeholderSlotsSkipped: 1,
+        membersAdded: 3,
+        membersUpdated: 4,
       };
     },
   };
@@ -146,9 +145,8 @@ test('processJob dispatches sync_all_members jobs', async () => {
   assert.deepEqual(result, {
     success: true,
     result: {
-      membersImported: 3,
-      cardsImported: 4,
-      placeholderSlotsSkipped: 1,
+      membersAdded: 3,
+      membersUpdated: 4,
     },
   });
 });
