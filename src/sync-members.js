@@ -68,7 +68,7 @@ function buildPagedSearchEnvelope(searchKey, items, metadata) {
   };
 }
 
-async function fetchAllUsers({ searchUsersFn, maxResults }) {
+export async function fetchAllUsers({ searchUsersFn, maxResults }) {
   const users = [];
   const searchID = '1';
   let searchResultPosition = 0;

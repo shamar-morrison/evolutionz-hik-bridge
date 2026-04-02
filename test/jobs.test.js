@@ -46,6 +46,31 @@ test('processJob dispatches list_available_cards jobs', async () => {
   });
 });
 
+test('processJob dispatches sync_available_cards jobs', async () => {
+  const calls = [];
+  const hikApi = {
+    syncAvailableCards: async (payload) => {
+      calls.push(payload);
+      return [{ cardNo: 'EF-009999', card_code: 'A18' }];
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-sync-cards',
+      type: 'sync_available_cards',
+      payload: {},
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [{}]);
+  assert.deepEqual(result, {
+    success: true,
+    result: [{ cardNo: 'EF-009999', card_code: 'A18' }],
+  });
+});
+
 test('processJob dispatches get_card jobs with card numbers', async () => {
   const calls = [];
   const hikApi = {

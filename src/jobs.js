@@ -91,6 +91,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { cardNo } or { employeeNo }
  *   list_available_cards - payload: {}
+ *   sync_available_cards - payload: {}
  *   list_available_slots - payload: {}
  *   sync_all_members - payload: {}
  *   reset_slot    - payload: { employeeNo, placeholderName }
@@ -154,6 +155,11 @@ export async function processJob(job, hikApi = hik) {
 
     case 'list_available_cards': {
       const result = await hikApi.listAvailableCards();
+      return { success: true, result };
+    }
+
+    case 'sync_available_cards': {
+      const result = await hikApi.syncAvailableCards(payload);
       return { success: true, result };
     }
 

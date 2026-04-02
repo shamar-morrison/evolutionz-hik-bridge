@@ -1,0 +1,114 @@
+import { SEARCH_PAGE_SIZE, SLOT_TOKEN_PREFIX_PATTERN } from './hik/constants.js';
+import { getCard, listAvailableCards, normalizeCardInfoList } from './hik/cards.js';
+import { searchUsers } from './hik/users.js';
+import { fetchAllUsers } from './sync-members.js';
+
+const UNASSIGNED_NAME_PATTERN = /\bunassigned\b/i;
+
+function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function extractCardCode(name) {
+  const normalizedName = normalizeText(name);
+  const match = normalizedName.match(SLOT_TOKEN_PREFIX_PATTERN);
+
+  return match?.[1] ? match[1].toUpperCase() : null;
+}
+
+function normalizeCardCode(value) {
+  const normalizedValue = normalizeText(value);
+  return normalizedValue || null;
+}
+
+function upsertCard(cardsByNumber, nextCard) {
+  if (!nextCard.cardNo) {
+    return;
+  }
+
+  const existingCard = cardsByNumber.get(nextCard.cardNo);
+
+  if (!existingCard || (!existingCard.card_code && nextCard.card_code)) {
+    cardsByNumber.set(nextCard.cardNo, nextCard);
+  }
+}
+
+function extractCardsFromGetCardResponse(response, employeeNo) {
+  const cardInfoSearch = response?.CardInfoSearch;
+
+  if (!cardInfoSearch || typeof cardInfoSearch !== 'object') {
+    throw new Error(
+      `Device returned an unexpected get card response for employee "${employeeNo}".`
+    );
+  }
+
+  return normalizeCardInfoList(cardInfoSearch.CardInfo);
+}
+
+function extractCardsFromAvailableCardResponse(response) {
+  const cards = response?.cards;
+
+  if (!Array.isArray(cards)) {
+    throw new Error('Device returned an unexpected available card list response.');
+  }
+
+  return cards;
+}
+
+function sortCards(leftCard, rightCard) {
+  return leftCard.cardNo.localeCompare(rightCard.cardNo);
+}
+
+export async function syncAvailableCards({
+  maxResults = SEARCH_PAGE_SIZE,
+  searchUsersFn = searchUsers,
+  getCardFn = getCard,
+  listAvailableCardsFn = listAvailableCards,
+} = {}) {
+  const users = await fetchAllUsers({ searchUsersFn, maxResults });
+  const cardsByNumber = new Map();
+
+  for (const userInfo of users) {
+    const employeeNo = normalizeText(userInfo?.employeeNo);
+    const name = normalizeText(userInfo?.name);
+
+    if (!employeeNo || !UNASSIGNED_NAME_PATTERN.test(name)) {
+      continue;
+    }
+
+    const cardCode = extractCardCode(name);
+    const cardResponse = await getCardFn({ employeeNo });
+    const matchedCards = extractCardsFromGetCardResponse(cardResponse, employeeNo);
+
+    for (const cardInfo of matchedCards) {
+      const cardNo = normalizeText(cardInfo?.cardNo);
+
+      if (!cardNo) {
+        continue;
+      }
+
+      upsertCard(cardsByNumber, {
+        cardNo,
+        card_code: cardCode,
+      });
+    }
+  }
+
+  const availableCardResponse = await listAvailableCardsFn({ maxResults });
+  const deviceAvailableCards = extractCardsFromAvailableCardResponse(availableCardResponse);
+
+  for (const card of deviceAvailableCards) {
+    const cardNo = normalizeText(card?.cardNo);
+
+    if (!cardNo) {
+      continue;
+    }
+
+    upsertCard(cardsByNumber, {
+      cardNo,
+      card_code: normalizeCardCode(card?.card_code),
+    });
+  }
+
+  return Array.from(cardsByNumber.values()).sort(sortCards);
+}

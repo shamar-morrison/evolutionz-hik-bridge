@@ -12,6 +12,7 @@ export {
   listAvailableCards,
   searchCards,
 } from './hik/cards.js';
+export { syncAvailableCards } from './sync-available-cards.js';
 export {
   listAvailableSlots,
   resetSlot,
