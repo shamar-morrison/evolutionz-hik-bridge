@@ -72,14 +72,27 @@ function createFakeSupabase({
   existingMembers = [],
   existingCards = [],
 } = {}) {
-  const insertedMembersPayloads = [];
-  const updatedMembersPayloads = [];
+  const upsertedMembersPayloads = [];
   const insertedCardsPayloads = [];
   const updatedCardsPayloads = [];
   const membersTable = new Map(
     existingMembers.map((member) => {
       if (typeof member === 'string') {
-        return [member, { employee_no: member, name: '' }];
+        return [
+          member,
+          {
+            employee_no: member,
+            name: '',
+            card_no: null,
+            type: 'General',
+            status: 'Active',
+            end_time: null,
+            gender: null,
+            phone: null,
+            email: null,
+            remark: null,
+          },
+        ];
       }
 
       return [
@@ -87,7 +100,14 @@ function createFakeSupabase({
         {
           employee_no: member.employee_no,
           name: member.name ?? '',
-          updated_at: member.updated_at ?? null,
+          card_no: member.card_no ?? null,
+          type: member.type ?? 'General',
+          status: member.status ?? 'Active',
+          end_time: member.end_time ?? null,
+          gender: member.gender ?? null,
+          phone: member.phone ?? null,
+          email: member.email ?? null,
+          remark: member.remark ?? null,
         },
       ];
     })
@@ -100,8 +120,7 @@ function createFakeSupabase({
   );
 
   return {
-    insertedMembersPayloads,
-    updatedMembersPayloads,
+    upsertedMembersPayloads,
     insertedCardsPayloads,
     updatedCardsPayloads,
     membersTable,
@@ -111,7 +130,10 @@ function createFakeSupabase({
         if (table === 'members') {
           return {
             select(columns) {
-              assert.equal(columns, 'employee_no, name');
+              assert.equal(
+                columns,
+                'employee_no, name, card_no, type, status, end_time, gender, phone, email, remark'
+              );
 
               return {
                 in(column, values) {
@@ -125,6 +147,14 @@ function createFakeSupabase({
                         return {
                           employee_no: member.employee_no,
                           name: member.name,
+                          card_no: member.card_no,
+                          type: member.type,
+                          status: member.status,
+                          end_time: member.end_time,
+                          gender: member.gender,
+                          phone: member.phone,
+                          email: member.email,
+                          remark: member.remark,
                         };
                       }),
                     error: null,
@@ -133,55 +163,32 @@ function createFakeSupabase({
               };
             },
             upsert(rows, options) {
-              assert.equal(options.ignoreDuplicates, true);
+              assert.equal(options.ignoreDuplicates, false);
               assert.equal(options.onConflict, 'employee_no');
-              insertedMembersPayloads.push(rows);
-
-              const insertedRows = [];
+              upsertedMembersPayloads.push(rows);
+              const persistedRows = [];
 
               for (const row of rows) {
-                if (membersTable.has(row.employee_no)) {
-                  continue;
-                }
+                const existingMember = membersTable.get(row.employee_no);
 
                 membersTable.set(row.employee_no, {
                   employee_no: row.employee_no,
                   name: row.name,
-                  updated_at: null,
+                  card_no: row.card_no ?? null,
+                  type: row.type,
+                  status: row.status,
+                  end_time: row.end_time ?? null,
+                  gender: row.gender ?? existingMember?.gender ?? null,
+                  phone: row.phone ?? existingMember?.phone ?? null,
+                  email: row.email ?? existingMember?.email ?? null,
+                  remark: row.remark ?? existingMember?.remark ?? null,
                 });
-                insertedRows.push({ employee_no: row.employee_no });
+                persistedRows.push({ employee_no: row.employee_no });
               }
 
               return {
                 select() {
-                  return Promise.resolve({ data: insertedRows, error: null });
-                },
-              };
-            },
-            update(values) {
-              return {
-                eq(column, value) {
-                  assert.equal(column, 'employee_no');
-
-                  const member = membersTable.get(value);
-                  const updatedRows = [];
-
-                  if (member) {
-                    member.name = values.name;
-                    member.updated_at = values.updated_at;
-                    updatedMembersPayloads.push({
-                      employee_no: value,
-                      values,
-                    });
-                    updatedRows.push({ employee_no: value });
-                  }
-
-                  return {
-                    select(selectColumns) {
-                      assert.equal(selectColumns, 'employee_no');
-                      return Promise.resolve({ data: updatedRows, error: null });
-                    },
-                  };
+                  return Promise.resolve({ data: persistedRows, error: null });
                 },
               };
             },
@@ -351,7 +358,7 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
     cardsImported: 5,
     placeholderSlotsSkipped: 1,
   });
-  assert.deepEqual(supabase.insertedMembersPayloads[0], [
+  assert.deepEqual(supabase.upsertedMembersPayloads[0], [
     {
       employee_no: '0001',
       name: 'Alice Brown',
@@ -359,7 +366,6 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       type: 'General',
       status: 'Active',
       end_time: new Date('2026-07-15T23:59:59').toISOString(),
-      balance: 0,
     },
     {
       employee_no: '0003',
@@ -368,7 +374,6 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       type: 'General',
       status: 'Expired',
       end_time: new Date('2020-01-01T00:00:00').toISOString(),
-      balance: 0,
     },
     {
       employee_no: '0004',
@@ -377,7 +382,6 @@ test('syncAllMembers paginates device data, stores clean member names, and persi
       type: 'General',
       status: 'Expired',
       end_time: null,
-      balance: 0,
     },
   ]);
   assert.deepEqual(supabase.insertedCardsPayloads[0], [
@@ -520,18 +524,151 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
     cardsImported: 0,
     placeholderSlotsSkipped: 0,
   });
-  assert.deepEqual(supabase.updatedMembersPayloads, [
-    {
-      employee_no: '0001',
-      values: {
+  assert.deepEqual(supabase.upsertedMembersPayloads, [
+    [
+      {
+        employee_no: '0001',
         name: 'Trishana Baker',
-        updated_at: supabase.membersTable.get('0001').updated_at,
+        card_no: 'CARD-1',
+        type: 'General',
+        status: 'Active',
+        end_time: new Date('2026-07-15T23:59:59').toISOString(),
       },
-    },
+    ],
   ]);
   assert.deepEqual(supabase.membersTable.get('0001'), {
     employee_no: '0001',
     name: 'Trishana Baker',
-    updated_at: supabase.membersTable.get('0001').updated_at,
+    card_no: 'CARD-1',
+    type: 'General',
+    status: 'Active',
+    end_time: new Date('2026-07-15T23:59:59').toISOString(),
+    gender: null,
+    phone: null,
+    email: null,
+    remark: null,
+  });
+});
+
+test('syncAllMembers maps gender, phone, email, and remark from Hik users', async () => {
+  const users = [
+    {
+      employeeNo: '0501',
+      name: 'Member 501',
+      gender: 'male',
+      phoneNo: ' ',
+      Tel: '876-555-1000',
+      email: 'member501@example.com',
+      remark: 'VIP',
+      Valid: {
+        enable: true,
+        endTime: '2026-07-15T23:59:59',
+      },
+    },
+  ];
+  const cards = [{ employeeNo: '0501', cardNo: 'CARD-501' }];
+  const supabase = createFakeSupabase();
+
+  const result = await syncAllMembers({
+    searchUsersFn: createPagedUserSearch(users).fn,
+    searchCardsFn: createPagedCardSearch(cards).fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersImported: 1,
+    cardsImported: 1,
+    placeholderSlotsSkipped: 0,
+  });
+  assert.deepEqual(supabase.upsertedMembersPayloads, [
+    [
+      {
+        employee_no: '0501',
+        name: 'Member 501',
+        card_no: 'CARD-501',
+        type: 'General',
+        status: 'Active',
+        end_time: new Date('2026-07-15T23:59:59').toISOString(),
+        gender: 'Male',
+        phone: '876-555-1000',
+        email: 'member501@example.com',
+        remark: 'VIP',
+      },
+    ],
+  ]);
+});
+
+test('syncAllMembers preserves existing profile data when the device returns blanks', async () => {
+  const users = [
+    {
+      employeeNo: '0700',
+      name: 'Member Seven',
+      gender: ' ',
+      phoneNo: ' ',
+      Tel: '',
+      email: null,
+      remark: '',
+      Valid: {
+        enable: false,
+        endTime: '2026-07-15T23:59:59',
+      },
+    },
+  ];
+  const cards = [{ employeeNo: '0700', cardNo: 'CARD-700' }];
+  const supabase = createFakeSupabase({
+    existingMembers: [
+      {
+        employee_no: '0700',
+        name: 'Member Seven',
+        card_no: 'OLD-CARD',
+        type: 'Student/BPO',
+        status: 'Active',
+        end_time: '2025-07-15T23:59:59.000Z',
+        gender: 'Female',
+        phone: '876-555-0700',
+        email: 'member700@example.com',
+        remark: 'Existing note',
+      },
+    ],
+  });
+
+  const result = await syncAllMembers({
+    searchUsersFn: createPagedUserSearch(users).fn,
+    searchCardsFn: createPagedCardSearch(cards).fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersImported: 1,
+    cardsImported: 1,
+    placeholderSlotsSkipped: 0,
+  });
+  assert.deepEqual(supabase.upsertedMembersPayloads, [
+    [
+      {
+        employee_no: '0700',
+        name: 'Member Seven',
+        card_no: 'CARD-700',
+        type: 'Student/BPO',
+        status: 'Expired',
+        end_time: new Date('2026-07-15T23:59:59').toISOString(),
+        gender: 'Female',
+        phone: '876-555-0700',
+        email: 'member700@example.com',
+        remark: 'Existing note',
+      },
+    ],
+  ]);
+  assert.deepEqual(supabase.membersTable.get('0700'), {
+    employee_no: '0700',
+    name: 'Member Seven',
+    card_no: 'CARD-700',
+    type: 'Student/BPO',
+    status: 'Expired',
+    end_time: new Date('2026-07-15T23:59:59').toISOString(),
+    gender: 'Female',
+    phone: '876-555-0700',
+    email: 'member700@example.com',
+    remark: 'Existing note',
   });
 });

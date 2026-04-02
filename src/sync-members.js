@@ -14,6 +14,29 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeNullableText(value) {
+  const normalizedValue = normalizeText(value);
+  return normalizedValue || null;
+}
+
+function normalizeMemberGender(value) {
+  const normalizedValue = normalizeText(value).toLowerCase();
+
+  if (normalizedValue === 'male') {
+    return 'Male';
+  }
+
+  if (normalizedValue === 'female') {
+    return 'Female';
+  }
+
+  return null;
+}
+
+function resolveProfileFieldValue(existingValue, nextValue) {
+  return normalizeNullableText(nextValue) ?? normalizeNullableText(existingValue);
+}
+
 function extractCardCode(name) {
   const normalizedName = normalizeText(name);
   const match = normalizedName.match(SLOT_TOKEN_PREFIX_PATTERN);
@@ -190,6 +213,59 @@ function shouldReplaceUserRecord(existingRecord, nextRecord) {
   return false;
 }
 
+function resolveMemberName(existingName, nextName) {
+  const normalizedExistingName = normalizeText(existingName);
+
+  if (!normalizedExistingName || normalizedExistingName === nextName) {
+    return nextName;
+  }
+
+  if (stripCardCodePrefix(normalizedExistingName) === nextName) {
+    return nextName;
+  }
+
+  return normalizedExistingName;
+}
+
+function buildSyncedMemberRow(existingMember, incomingMember) {
+  const nextName = resolveMemberName(existingMember?.name, incomingMember.name);
+  const nextGender = resolveProfileFieldValue(existingMember?.gender, incomingMember.gender);
+  const nextPhone = resolveProfileFieldValue(existingMember?.phone, incomingMember.phone);
+  const nextEmail = resolveProfileFieldValue(existingMember?.email, incomingMember.email);
+  const nextRemark = resolveProfileFieldValue(existingMember?.remark, incomingMember.remark);
+
+  return {
+    employee_no: incomingMember.employee_no,
+    name: nextName,
+    card_no: incomingMember.card_no,
+    type: normalizeText(existingMember?.type) || incomingMember.type,
+    status: incomingMember.status,
+    end_time: incomingMember.end_time,
+    ...(nextGender ? { gender: nextGender } : {}),
+    ...(nextPhone ? { phone: nextPhone } : {}),
+    ...(nextEmail ? { email: nextEmail } : {}),
+    ...(nextRemark ? { remark: nextRemark } : {}),
+  };
+}
+
+function hasMemberRowChanged(existingMember, nextMemberRow) {
+  if (!existingMember) {
+    return true;
+  }
+
+  return (
+    normalizeText(existingMember.name) !== normalizeText(nextMemberRow.name) ||
+    normalizeText(existingMember.card_no) !== normalizeText(nextMemberRow.card_no) ||
+    normalizeText(existingMember.type) !== normalizeText(nextMemberRow.type) ||
+    normalizeText(existingMember.status) !== normalizeText(nextMemberRow.status) ||
+    normalizeNullableText(existingMember.end_time) !== normalizeNullableText(nextMemberRow.end_time) ||
+    normalizeNullableText(existingMember.gender) !== normalizeNullableText(nextMemberRow.gender) ||
+    normalizeNullableText(existingMember.phone) !== normalizeNullableText(nextMemberRow.phone) ||
+    normalizeNullableText(existingMember.email) !== normalizeNullableText(nextMemberRow.email) ||
+    normalizeNullableText(existingMember.remark) !== normalizeNullableText(nextMemberRow.remark)
+  );
+}
+
 function upsertCardRow(cardsByNumber, nextCardRow) {
   const existingCardRow = cardsByNumber.get(nextCardRow.card_no);
 
@@ -217,10 +293,9 @@ async function insertMembers(supabase, members) {
   }
 
   const employeeNos = members.map((member) => member.employee_no);
-  const membersByEmployeeNo = new Map(members.map((member) => [member.employee_no, member]));
   const { data: existingMembers, error: existingMembersError } = await supabase
     .from('members')
-    .select('employee_no, name')
+    .select('employee_no, name, card_no, type, status, end_time, gender, phone, email, remark')
     .in('employee_no', employeeNos);
 
   if (existingMembersError) {
@@ -230,61 +305,46 @@ async function insertMembers(supabase, members) {
   const existingMembersByEmployeeNo = new Map(
     (Array.isArray(existingMembers) ? existingMembers : []).map((member) => [
       normalizeText(member.employee_no),
-      normalizeText(member.name),
+      {
+        employee_no: normalizeText(member.employee_no),
+        name: normalizeText(member.name),
+        card_no: normalizeNullableText(member.card_no),
+        type: normalizeText(member.type),
+        status: normalizeText(member.status),
+        end_time: normalizeNullableText(member.end_time),
+        gender: normalizeNullableText(member.gender),
+        phone: normalizeNullableText(member.phone),
+        email: normalizeNullableText(member.email),
+        remark: normalizeNullableText(member.remark),
+      },
     ])
   );
-  const newMembers = members.filter((member) => !existingMembersByEmployeeNo.has(member.employee_no));
-  let insertedRows = [];
+  const upsertMembers = members
+    .map((member) => {
+      const existingMember = existingMembersByEmployeeNo.get(member.employee_no);
+      const nextMemberRow = buildSyncedMemberRow(existingMember, member);
 
-  if (newMembers.length > 0) {
-    const { data, error } = await supabase
-      .from('members')
-      .upsert(newMembers, {
-        onConflict: 'employee_no',
-        ignoreDuplicates: true,
-      })
-      .select('employee_no');
+      return hasMemberRowChanged(existingMember, nextMemberRow) ? nextMemberRow : null;
+    })
+    .filter(Boolean);
 
-    if (error) {
-      throw new Error(`Failed to sync members into Supabase: ${error.message}`);
-    }
-
-    insertedRows = Array.isArray(data) ? data : [];
+  if (upsertMembers.length === 0) {
+    return [];
   }
 
-  const updatedRows = [];
-  const updatedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('members')
+    .upsert(upsertMembers, {
+      onConflict: 'employee_no',
+      ignoreDuplicates: false,
+    })
+    .select('employee_no');
 
-  for (const [employeeNo, existingName] of existingMembersByEmployeeNo.entries()) {
-    const incomingMember = membersByEmployeeNo.get(employeeNo);
-
-    if (!incomingMember || !existingName || existingName === incomingMember.name) {
-      continue;
-    }
-
-    if (stripCardCodePrefix(existingName) !== incomingMember.name) {
-      continue;
-    }
-
-    const { data, error } = await supabase
-      .from('members')
-      .update({
-        name: incomingMember.name,
-        updated_at: updatedAt,
-      })
-      .eq('employee_no', employeeNo)
-      .select('employee_no');
-
-    if (error) {
-      throw new Error(`Failed to normalize member names in Supabase: ${error.message}`);
-    }
-
-    if (Array.isArray(data)) {
-      updatedRows.push(...data);
-    }
+  if (error) {
+    throw new Error(`Failed to sync members into Supabase: ${error.message}`);
   }
 
-  return [...insertedRows, ...updatedRows];
+  return Array.isArray(data) ? data : [];
 }
 
 async function insertCards(supabase, cards) {
@@ -418,6 +478,10 @@ export async function syncAllMembers({
       name: stripCardCodePrefix(name) || employeeNo,
       cardCode,
       isPlaceholder: false,
+      gender: normalizeMemberGender(userInfo?.gender),
+      phone: normalizeNullableText(userInfo?.phoneNo) ?? normalizeNullableText(userInfo?.Tel),
+      email: normalizeNullableText(userInfo?.email),
+      remark: normalizeNullableText(userInfo?.remark),
       ...normalizeMemberValidity(userInfo?.Valid, now),
     };
 
@@ -488,7 +552,10 @@ export async function syncAllMembers({
       type: 'General',
       status: userRecord.status,
       end_time: userRecord.expiry,
-      balance: 0,
+      ...(userRecord.gender ? { gender: userRecord.gender } : {}),
+      ...(userRecord.phone ? { phone: userRecord.phone } : {}),
+      ...(userRecord.email ? { email: userRecord.email } : {}),
+      ...(userRecord.remark ? { remark: userRecord.remark } : {}),
     });
   }
 
