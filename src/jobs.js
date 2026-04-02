@@ -3,7 +3,7 @@
 
 import * as hik from './hik.js';
 import { buildUserInfoPayload } from './hik/users.js';
-import { toBoolean } from './hik/shared.js';
+import { getNumericField, normalizeList, toBoolean } from './hik/shared.js';
 import { getUserModifyMode } from './hik/config.js';
 
 const WRITE_JOB_ROUTES = {
@@ -90,6 +90,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
  *   add_card      - payload: { employeeNo, cardNo }
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { cardNo } or { employeeNo }
+ *   get_member_events - payload: { employeeNoString, maxResults, searchResultPosition }
  *   list_available_cards - payload: {}
  *   sync_available_cards - payload: {}
  *   list_available_slots - payload: {}
@@ -151,6 +152,41 @@ export async function processJob(job, hikApi = hik) {
     case 'get_card': {
       const result = await hikApi.getCard(payload);
       return { success: true, result };
+    }
+
+    case 'get_member_events': {
+      const acsEventResponse = await hikApi.getMemberEvents({
+        employeeNoString: payload.employeeNoString,
+        maxResults: payload.maxResults,
+        searchResultPosition: payload.searchResultPosition,
+      });
+      const acsEvent = acsEventResponse?.AcsEvent ?? acsEventResponse;
+      const events = normalizeList(acsEvent?.InfoList)
+        .map((event) => {
+          const time = typeof event?.time === 'string' ? event.time.trim() : '';
+          const cardNo =
+            typeof event?.cardNo === 'string' && event.cardNo.trim() ? event.cardNo.trim() : null;
+
+          if (!time) {
+            return null;
+          }
+
+          return {
+            time,
+            major: getNumericField(event?.major, 0),
+            minor: getNumericField(event?.minor, 0),
+            cardNo,
+          };
+        })
+        .filter(Boolean);
+
+      return {
+        success: true,
+        result: {
+          events,
+          totalMatches: getNumericField(acsEvent?.totalMatches, events.length),
+        },
+      };
     }
 
     case 'list_available_cards': {

@@ -331,6 +331,7 @@ test('src/hik.js preserves the public Hik API surface after the module split', a
       'deleteUser',
       'getCapabilities',
       'getCard',
+      'getMemberEvents',
       'getUser',
       'listAvailableCards',
       'listAvailableSlots',
@@ -343,6 +344,54 @@ test('src/hik.js preserves the public Hik API surface after the module split', a
       'unlockDoor',
     ].sort()
   );
+});
+
+test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      AcsEvent: {
+        responseStatusStrg: 'OK',
+        numOfMatches: 1,
+        totalMatches: 1,
+        InfoList: [],
+      },
+    }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.getMemberEvents({
+      employeeNoString: '00000611',
+      maxResults: 20,
+      searchResultPosition: 40,
+    });
+
+    assert.deepEqual(result, {
+      responseStatusStrg: 'OK',
+      numOfMatches: 1,
+      totalMatches: 1,
+      InfoList: [],
+    });
+
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/AcsEvent?format=json');
+    assert.deepEqual(payload, {
+      AcsEventCond: {
+        searchID: '1',
+        searchResultPosition: 40,
+        maxResults: 20,
+        major: 5,
+        employeeNoString: '00000611',
+      },
+    });
+  } finally {
+    await device.close();
+  }
 });
 
 test('digest-fetch reuses auth state on a shared client under overlapping requests', async () => {

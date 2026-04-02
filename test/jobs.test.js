@@ -96,6 +96,60 @@ test('processJob dispatches get_card jobs with card numbers', async () => {
   });
 });
 
+test('processJob dispatches get_member_events jobs and normalizes device events', async () => {
+  const calls = [];
+  const hikApi = {
+    getMemberEvents: async (payload) => {
+      calls.push(payload);
+      return {
+        responseStatusStrg: 'OK',
+        totalMatches: '41',
+        InfoList: {
+          time: '2026-04-02T14:17:00+08:00',
+          major: '5',
+          minor: '75',
+          cardNo: ' 0102857149 ',
+        },
+      };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-get-member-events',
+      type: 'get_member_events',
+      payload: {
+        employeeNoString: '00000611',
+        maxResults: 20,
+        searchResultPosition: 40,
+      },
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [
+    {
+      employeeNoString: '00000611',
+      maxResults: 20,
+      searchResultPosition: 40,
+    },
+  ]);
+  assert.deepEqual(result, {
+    success: true,
+    result: {
+      events: [
+        {
+          time: '2026-04-02T14:17:00+08:00',
+          major: 5,
+          minor: 75,
+          cardNo: '0102857149',
+        },
+      ],
+      totalMatches: 41,
+    },
+  });
+});
+
 test('processJob dispatches list_available_slots jobs', async () => {
   const hikApi = {
     listAvailableSlots: async () => ({
