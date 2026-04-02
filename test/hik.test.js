@@ -360,8 +360,31 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
   });
   const port = await device.start();
   const hik = await loadHikModule(port);
+  const realDate = globalThis.Date;
+  const fixedTimestamp = new realDate('2026-04-02T18:30:00').getTime();
 
   try {
+    class FakeDate extends realDate {
+      constructor(...args) {
+        if (args.length === 0) {
+          super(fixedTimestamp);
+          return;
+        }
+
+        super(...args);
+      }
+
+      static now() {
+        return fixedTimestamp;
+      }
+
+      toISOString() {
+        return '1999-01-01T00:00:00.000Z';
+      }
+    }
+
+    globalThis.Date = FakeDate;
+
     const result = await hik.getMemberEvents({
       employeeNoString: '00000611',
       maxResults: 20,
@@ -387,10 +410,13 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
         maxResults: 20,
         major: 5,
         minor: 0,
+        startTime: '2020-01-01T00:00:00',
+        endTime: '2026-04-02T18:30:00',
         employeeNoString: '00000611',
       },
     });
   } finally {
+    globalThis.Date = realDate;
     await device.close();
   }
 });
