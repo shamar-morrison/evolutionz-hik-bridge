@@ -90,7 +90,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
  *   add_card      - payload: { employeeNo, cardNo }
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { cardNo } or { employeeNo }
- *   get_member_events - payload: { employeeNoString, maxResults, searchResultPosition }
+ *   get_member_events - payload: { employeeNoString, maxResults, searchResultPosition, searchID? }
  *   list_available_cards - payload: {}
  *   sync_available_cards - payload: {}
  *   list_available_slots - payload: {}
@@ -158,6 +158,7 @@ export async function processJob(job, hikApi = hik) {
       const acsEventResponse = await hikApi.getMemberEvents({
         employeeNoString: payload.employeeNoString,
         maxResults: payload.maxResults,
+        searchID: payload.searchID,
         searchResultPosition: payload.searchResultPosition,
       });
       const acsEvent = acsEventResponse?.AcsEvent ?? acsEventResponse;

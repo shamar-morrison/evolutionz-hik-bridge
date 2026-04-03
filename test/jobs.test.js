@@ -121,6 +121,7 @@ test('processJob dispatches get_member_events jobs and normalizes device events'
       payload: {
         employeeNoString: '00000611',
         maxResults: 20,
+        searchID: 'shared-search-id-123',
         searchResultPosition: 40,
       },
     },
@@ -131,6 +132,7 @@ test('processJob dispatches get_member_events jobs and normalizes device events'
     {
       employeeNoString: '00000611',
       maxResults: 20,
+      searchID: 'shared-search-id-123',
       searchResultPosition: 40,
     },
   ]);

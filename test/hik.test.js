@@ -403,6 +403,40 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
   }
 });
 
+test('getMemberEvents uses a provided searchID unchanged', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      AcsEvent: {
+        responseStatusStrg: 'OK',
+        numOfMatches: 0,
+        totalMatches: 0,
+        InfoList: [],
+      },
+    }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    await hik.getMemberEvents({
+      employeeNoString: '00000611',
+      maxResults: 10,
+      searchID: 'shared-route-search-id',
+      searchResultPosition: 31,
+    });
+
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(payload?.AcsEventCond?.searchID, 'shared-route-search-id');
+    assert.equal(payload?.AcsEventCond?.maxResults, 10);
+    assert.equal(payload?.AcsEventCond?.searchResultPosition, 31);
+  } finally {
+    await device.close();
+  }
+});
+
 test('digest-fetch reuses auth state on a shared client under overlapping requests', async () => {
   const device = createDigestServer({ route: '/auth' });
   const port = await device.start();

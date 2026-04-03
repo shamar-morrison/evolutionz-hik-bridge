@@ -6,13 +6,13 @@ const MEMBER_EVENTS_START_TIME = '2020-01-01T00:00:00';
 export async function getMemberEvents({
   employeeNoString,
   maxResults = SEARCH_PAGE_SIZE,
+  searchID = Date.now().toString(),
   searchResultPosition = 0,
 }) {
   const normalizedEmployeeNoString =
     typeof employeeNoString === 'string' ? employeeNoString.trim() : '';
   const memberEventsEndYear = new Date().getFullYear() + 1;
   const memberEventsEndTime = `${memberEventsEndYear}-12-31T23:59:59`;
-  const searchID = Date.now().toString();
 
   const response = await performIsapiRequest('/ISAPI/AccessControl/AcsEvent?format=json', {
     method: 'POST',
