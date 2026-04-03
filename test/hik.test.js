@@ -382,6 +382,10 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
     assert.equal(request.route, '/ISAPI/AccessControl/AcsEvent?format=json');
     assert.equal(typeof payload?.AcsEventCond?.searchID, 'string');
     assert.ok(payload.AcsEventCond.searchID.length > 0);
+    const expectedMemberEventsEndTimePattern = new RegExp(
+      `^${new Date().getFullYear() + 1}-12-31T23:59:59$`
+    );
+    assert.match(payload.AcsEventCond.endTime, expectedMemberEventsEndTimePattern);
     assert.deepEqual(payload, {
       AcsEventCond: {
         searchID: payload.AcsEventCond.searchID,
@@ -390,7 +394,7 @@ test('getMemberEvents uses POST AcsEvent with employeeNoString paging filters', 
         major: 5,
         minor: 0,
         startTime: '2020-01-01T00:00:00',
-        endTime: '2099-12-31T23:59:59',
+        endTime: payload.AcsEventCond.endTime,
         employeeNoString: '00000611',
       },
     });
