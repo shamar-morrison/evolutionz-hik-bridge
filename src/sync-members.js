@@ -279,6 +279,27 @@ function hasMemberRowChanged(existingMember, nextMemberRow) {
   );
 }
 
+function upsertCardRow(cardsByNumber, nextCardRow) {
+  const existingCardRow = cardsByNumber.get(nextCardRow.card_no);
+
+  if (!existingCardRow) {
+    cardsByNumber.set(nextCardRow.card_no, nextCardRow);
+    return;
+  }
+
+  if (existingCardRow.status === 'available' && nextCardRow.status === 'assigned') {
+    cardsByNumber.set(nextCardRow.card_no, nextCardRow);
+    return;
+  }
+
+  if (!existingCardRow.card_code && nextCardRow.card_code) {
+    cardsByNumber.set(nextCardRow.card_no, {
+      ...existingCardRow,
+      card_code: nextCardRow.card_code,
+    });
+  }
+}
+
 async function insertMembers(supabase, members) {
   if (members.length === 0) {
     return { membersAdded: 0, membersUpdated: 0 };
@@ -353,6 +374,47 @@ async function insertMembers(supabase, members) {
   return { membersAdded, membersUpdated };
 }
 
+async function insertCards(supabase, cards) {
+  if (cards.length === 0) {
+    return [];
+  }
+
+  const cardNos = cards.map((card) => card.card_no);
+  const { data: existingCards, error: existingCardsError } = await supabase
+    .from('cards')
+    .select('card_no')
+    .in('card_no', cardNos);
+
+  if (existingCardsError) {
+    throw new Error(`Failed to read existing cards from Supabase: ${existingCardsError.message}`);
+  }
+
+  const existingCardNos = new Set(
+    (Array.isArray(existingCards) ? existingCards : [])
+      .map((card) => normalizeText(card.card_no))
+      .filter(Boolean)
+  );
+  const newCards = cards.filter((card) => !existingCardNos.has(card.card_no));
+
+  if (newCards.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('cards')
+    .upsert(newCards, {
+      onConflict: 'card_no',
+      ignoreDuplicates: true,
+    })
+    .select('card_no');
+
+  if (error) {
+    throw new Error(`Failed to insert new cards into Supabase: ${error.message}`);
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
 export async function syncAllMembers({
   maxResults = SEARCH_PAGE_SIZE,
   now = new Date(),
@@ -365,6 +427,7 @@ export async function syncAllMembers({
 
   const membersByCanonicalEmployeeNo = new Map();
   const primaryCardByCanonicalEmployeeNo = new Map();
+  const cardsByNumber = new Map();
 
   for (const userInfo of users) {
     const employeeNo = normalizeText(userInfo?.employeeNo);
@@ -419,6 +482,12 @@ export async function syncAllMembers({
     if (!currentPrimaryCardNo || cardNo.localeCompare(currentPrimaryCardNo) < 0) {
       primaryCardByCanonicalEmployeeNo.set(canonicalEmployeeNo, cardNo);
     }
+
+    upsertCardRow(cardsByNumber, {
+      card_no: cardNo,
+      employee_no: matchedMember.employeeNo,
+      status: 'assigned',
+    });
   }
 
   const members = [];
@@ -439,5 +508,12 @@ export async function syncAllMembers({
     });
   }
 
-  return await insertMembers(supabase, members);
+  const insertedMembers = await insertMembers(supabase, members);
+  const insertedCards = await insertCards(supabase, Array.from(cardsByNumber.values()));
+
+  return {
+    membersAdded: insertedMembers.membersAdded,
+    membersUpdated: insertedMembers.membersUpdated,
+    cardsImported: insertedCards.length,
+  };
 }

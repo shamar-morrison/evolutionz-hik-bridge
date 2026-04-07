@@ -48,8 +48,9 @@ function createPagedCardSearch(cards) {
   };
 }
 
-function createFakeSupabase({ existingMembers = [] } = {}) {
+function createFakeSupabase({ existingMembers = [], existingCards = [] } = {}) {
   const upsertedMembersPayloads = [];
+  const upsertedCardsPayloads = [];
   const membersTable = new Map(
     existingMembers.map((member) => {
       if (typeof member === 'string') {
@@ -89,10 +90,37 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
       ];
     })
   );
+  const cardsTable = new Map(
+    existingCards.map((card) => {
+      if (typeof card === 'string') {
+        return [
+          card,
+          {
+            card_no: card,
+            employee_no: null,
+            status: 'assigned',
+            card_code: null,
+          },
+        ];
+      }
+
+      return [
+        card.card_no,
+        {
+          card_no: card.card_no,
+          employee_no: card.employee_no ?? null,
+          status: card.status ?? 'assigned',
+          card_code: card.card_code ?? null,
+        },
+      ];
+    })
+  );
 
   return {
     upsertedMembersPayloads,
+    upsertedCardsPayloads,
     membersTable,
+    cardsTable,
     client: {
       from(table) {
         if (table === 'members') {
@@ -165,13 +193,65 @@ function createFakeSupabase({ existingMembers = [] } = {}) {
           };
         }
 
+        if (table === 'cards') {
+          return {
+            select(columns) {
+              assert.equal(columns, 'card_no');
+
+              return {
+                in(column, values) {
+                  assert.equal(column, 'card_no');
+
+                  return Promise.resolve({
+                    data: values
+                      .filter((value) => cardsTable.has(value))
+                      .map((value) => {
+                        const card = cardsTable.get(value);
+                        return {
+                          card_no: card.card_no,
+                        };
+                      }),
+                    error: null,
+                  });
+                },
+              };
+            },
+            upsert(rows, options) {
+              assert.equal(options.ignoreDuplicates, true);
+              assert.equal(options.onConflict, 'card_no');
+              upsertedCardsPayloads.push(rows);
+              const persistedRows = [];
+
+              for (const row of rows) {
+                if (cardsTable.has(row.card_no)) {
+                  continue;
+                }
+
+                cardsTable.set(row.card_no, {
+                  card_no: row.card_no,
+                  employee_no: row.employee_no ?? null,
+                  status: row.status,
+                  card_code: row.card_code ?? null,
+                });
+                persistedRows.push({ card_no: row.card_no });
+              }
+
+              return {
+                select() {
+                  return Promise.resolve({ data: persistedRows, error: null });
+                },
+              };
+            },
+          };
+        }
+
         throw new Error(`Unexpected table: ${table}`);
       },
     },
   };
 }
 
-test('syncAllMembers paginates device data, stores clean member names, and skips card-table sync', async () => {
+test('syncAllMembers paginates device data, stores clean member names, and inserts matched member cards only', async () => {
   const users = [
     {
       employeeNo: '0001',
@@ -239,6 +319,7 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
   assert.deepEqual(result, {
     membersAdded: 3,
     membersUpdated: 0,
+    cardsImported: 3,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads[0], [
     {
@@ -266,6 +347,25 @@ test('syncAllMembers paginates device data, stores clean member names, and skips
       type: 'General',
       status: 'Expired',
     },
+  ]);
+  assert.deepEqual(supabase.upsertedCardsPayloads, [
+    [
+      {
+        card_no: 'CARD-2',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+      {
+        card_no: 'CARD-1',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+      {
+        card_no: 'EXPIRED-CARD',
+        employee_no: '0003',
+        status: 'assigned',
+      },
+    ],
   ]);
 });
 
@@ -300,12 +400,72 @@ test('syncAllMembers skips unchanged members on rerun', async () => {
   assert.deepEqual(firstRun, {
     membersAdded: 1,
     membersUpdated: 0,
+    cardsImported: 1,
   });
   assert.deepEqual(secondRun, {
     membersAdded: 0,
     membersUpdated: 0,
+    cardsImported: 0,
   });
   assert.equal(supabase.upsertedMembersPayloads.length, 1);
+  assert.deepEqual(supabase.upsertedCardsPayloads, [
+    [
+      {
+        card_no: 'CARD-1',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+    ],
+  ]);
+});
+
+test('syncAllMembers only inserts new assigned cards and dedupes duplicate card sightings', async () => {
+  const users = [
+    {
+      employeeNo: '0001',
+      name: 'A1 Alice Brown',
+      Valid: {
+        enable: true,
+        beginTime: '2026-01-15T00:00:00',
+        endTime: '2026-07-15T23:59:59',
+      },
+    },
+  ];
+  const cards = [
+    { employeeNo: '0001', cardNo: 'CARD-1' },
+    { employeeNo: '1', cardNo: 'CARD-1' },
+    { employeeNo: '0001', cardNo: 'CARD-2' },
+  ];
+  const supabase = createFakeSupabase({
+    existingCards: [
+      {
+        card_no: 'CARD-2',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+    ],
+  });
+
+  const result = await syncAllMembers({
+    searchUsersFn: createPagedUserSearch(users).fn,
+    searchCardsFn: createPagedCardSearch(cards).fn,
+    supabase: supabase.client,
+  });
+
+  assert.deepEqual(result, {
+    membersAdded: 1,
+    membersUpdated: 0,
+    cardsImported: 1,
+  });
+  assert.deepEqual(supabase.upsertedCardsPayloads, [
+    [
+      {
+        card_no: 'CARD-1',
+        employee_no: '0001',
+        status: 'assigned',
+      },
+    ],
+  ]);
 });
 
 test('syncAllMembers normalizes existing prefixed member names on rerun', async () => {
@@ -342,6 +502,7 @@ test('syncAllMembers normalizes existing prefixed member names on rerun', async 
   assert.deepEqual(result, {
     membersAdded: 0,
     membersUpdated: 1,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, [
     [
@@ -400,6 +561,7 @@ test('syncAllMembers maps gender, phone, email, and remark from Hik users', asyn
   assert.deepEqual(result, {
     membersAdded: 1,
     membersUpdated: 0,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, [
     [
@@ -448,6 +610,7 @@ test('syncAllMembers reads gender, phone, email, and remark from alias fields', 
   assert.deepEqual(result, {
     membersAdded: 1,
     membersUpdated: 0,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, [
     [
@@ -513,6 +676,7 @@ test('syncAllMembers preserves existing profile data when the device returns bla
   assert.deepEqual(result, {
     membersAdded: 0,
     membersUpdated: 1,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, [
     [
@@ -582,6 +746,7 @@ test('syncAllMembers preserves existing end_time when the device returns a blank
   assert.deepEqual(result, {
     membersAdded: 0,
     membersUpdated: 0,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, []);
   assert.deepEqual(supabase.membersTable.get('0710'), {
@@ -635,6 +800,7 @@ test('syncAllMembers counts begin_time-only changes as member updates', async ()
   assert.deepEqual(result, {
     membersAdded: 0,
     membersUpdated: 1,
+    cardsImported: 1,
   });
   assert.deepEqual(supabase.upsertedMembersPayloads, [
     [
