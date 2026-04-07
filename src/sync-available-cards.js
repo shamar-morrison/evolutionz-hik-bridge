@@ -1,5 +1,6 @@
 import { SEARCH_PAGE_SIZE, SLOT_TOKEN_PREFIX_PATTERN } from './hik/constants.js';
 import { getCard, listAvailableCards, normalizeCardInfoList } from './hik/cards.js';
+import { canonicalizeEmployeeNo } from './hik/shared.js';
 import { searchUsers } from './hik/users.js';
 import { fetchAllUsers } from './sync-members.js';
 
@@ -83,7 +84,8 @@ export async function syncAvailableCards({
     );
 
     const cardCode = extractCardCode(name);
-    const cardResponse = await getCardFn({ employeeNo });
+    const canonicalEmployeeNo = canonicalizeEmployeeNo(employeeNo);
+    const cardResponse = await getCardFn({ employeeNo: canonicalEmployeeNo });
     const matchedCards = extractCardsFromGetCardResponse(cardResponse, employeeNo);
 
     console.log(

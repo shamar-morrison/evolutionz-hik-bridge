@@ -42,7 +42,7 @@ test(
       getCardFn: async (payload) => {
         getCardCalls.push(payload);
 
-        if (payload.employeeNo === '0001') {
+        if (payload.employeeNo === '1') {
           return {
             CardInfoSearch: {
               CardInfo: [{ cardNo: 'CARD-2' }, { cardNo: 'CARD-1' }],
@@ -50,7 +50,7 @@ test(
           };
         }
 
-        if (payload.employeeNo === '0003') {
+        if (payload.employeeNo === '3') {
           return {
             CardInfoSearch: {
               CardInfo: [{ cardNo: 'CARD-4' }],
@@ -58,7 +58,7 @@ test(
           };
         }
 
-        if (payload.employeeNo === '0004') {
+        if (payload.employeeNo === '4') {
           return {
             CardInfoSearch: {
               CardInfo: { cardNo: 'CARD-4' },
@@ -78,9 +78,9 @@ test(
       { searchResultPosition: 2, maxResults: 2 },
     ]);
     assert.deepEqual(getCardCalls, [
-      { employeeNo: '0001' },
-      { employeeNo: '0003' },
-      { employeeNo: '0004' },
+      { employeeNo: '1' },
+      { employeeNo: '3' },
+      { employeeNo: '4' },
     ]);
     assert.deepEqual(result, [
       { cardNo: 'CARD-1', card_code: 'P4' },
