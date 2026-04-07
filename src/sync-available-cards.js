@@ -68,6 +68,8 @@ export async function syncAvailableCards({
   const users = await fetchAllUsers({ searchUsersFn, maxResults });
   const cardsByNumber = new Map();
 
+  console.log(`[sync-available-cards] fetchAllUsers returned ${users.length} users`);
+
   for (const userInfo of users) {
     const employeeNo = normalizeText(userInfo?.employeeNo);
     const name = normalizeText(userInfo?.name);
@@ -76,9 +78,17 @@ export async function syncAvailableCards({
       continue;
     }
 
+    console.log(
+      `[sync-available-cards] matched unassigned user name="${name}" employeeNo="${employeeNo}"`
+    );
+
     const cardCode = extractCardCode(name);
     const cardResponse = await getCardFn({ employeeNo });
     const matchedCards = extractCardsFromGetCardResponse(cardResponse, employeeNo);
+
+    console.log(
+      `[sync-available-cards] getCard returned ${matchedCards.length} cards for employeeNo="${employeeNo}"`
+    );
 
     for (const cardInfo of matchedCards) {
       const cardNo = normalizeText(cardInfo?.cardNo);
@@ -109,6 +119,10 @@ export async function syncAvailableCards({
       card_code: normalizeCardCode(card?.card_code),
     });
   }
+
+  console.log(
+    `[sync-available-cards] cardsByNumber size before return: ${cardsByNumber.size}`
+  );
 
   return Array.from(cardsByNumber.values()).sort(sortCards);
 }
