@@ -354,16 +354,19 @@ test('syncAllMembers paginates device data, stores clean member names, and inser
         card_no: 'CARD-2',
         employee_no: '0001',
         status: 'assigned',
+        card_code: 'A1',
       },
       {
         card_no: 'CARD-1',
         employee_no: '0001',
         status: 'assigned',
+        card_code: 'A1',
       },
       {
         card_no: 'EXPIRED-CARD',
         employee_no: '0003',
         status: 'assigned',
+        card_code: 'C4',
       },
     ],
   ]);
@@ -414,6 +417,7 @@ test('syncAllMembers skips unchanged members on rerun', async () => {
         card_no: 'CARD-1',
         employee_no: '0001',
         status: 'assigned',
+        card_code: 'A1',
       },
     ],
   ]);
@@ -463,6 +467,7 @@ test('syncAllMembers only inserts new assigned cards and dedupes duplicate card 
         card_no: 'CARD-1',
         employee_no: '0001',
         status: 'assigned',
+        card_code: 'A1',
       },
     ],
   ]);

@@ -446,6 +446,7 @@ export async function syncAllMembers({
     const memberRecord = {
       canonicalEmployeeNo,
       employeeNo,
+      cardCode: extractCardCode(name),
       name: stripCardCodePrefix(name) || employeeNo,
       ...extractMemberProfile(userInfo),
       ...normalizeMemberValidity(userInfo?.Valid, now),
@@ -487,6 +488,7 @@ export async function syncAllMembers({
       card_no: cardNo,
       employee_no: matchedMember.employeeNo,
       status: 'assigned',
+      card_code: matchedMember.cardCode ?? null,
     });
   }
 
