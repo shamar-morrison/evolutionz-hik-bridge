@@ -1,6 +1,5 @@
 import { SEARCH_PAGE_SIZE, SLOT_TOKEN_PREFIX_PATTERN } from './hik/constants.js';
 import { getCard, listAvailableCards, normalizeCardInfoList } from './hik/cards.js';
-import { canonicalizeEmployeeNo } from './hik/shared.js';
 import { searchUsers } from './hik/users.js';
 import { fetchAllUsers } from './sync-members.js';
 
@@ -69,42 +68,17 @@ export async function syncAvailableCards({
   const users = await fetchAllUsers({ searchUsersFn, maxResults });
   const cardsByNumber = new Map();
 
-  console.log(`[sync-available-cards] fetchAllUsers returned ${users.length} users`);
-
   for (const userInfo of users) {
     const employeeNo = normalizeText(userInfo?.employeeNo);
     const name = normalizeText(userInfo?.name);
-    const matchesUnassignedPattern = UNASSIGNED_NAME_PATTERN.test(name);
 
-    if (!employeeNo || !matchesUnassignedPattern) {
-      if (!matchesUnassignedPattern && name.toLowerCase().includes('unassigned')) {
-        console.log(
-          `[sync-available-cards] non-matching unassigned-like name="${name}" charCodes=${JSON.stringify(
-            [...name].map((c) => c.charCodeAt(0))
-          )}`
-        );
-      }
-
+    if (!employeeNo || !UNASSIGNED_NAME_PATTERN.test(name)) {
       continue;
     }
 
-    console.log(
-      `[sync-available-cards] matched unassigned user name="${name}" employeeNo="${employeeNo}"`
-    );
-
     const cardCode = extractCardCode(name);
-    const canonicalEmployeeNo = canonicalizeEmployeeNo(employeeNo);
-    const cardResponse = await getCardFn({ employeeNo: canonicalEmployeeNo });
-
-    if (cardCode === 'P86') {
-      console.log('[sync-available-cards] raw getCard response for P86 user', cardResponse);
-    }
-
+    const cardResponse = await getCardFn({ employeeNo });
     const matchedCards = extractCardsFromGetCardResponse(cardResponse, employeeNo);
-
-    console.log(
-      `[sync-available-cards] getCard returned ${matchedCards.length} cards for employeeNo="${employeeNo}"`
-    );
 
     for (const cardInfo of matchedCards) {
       const cardNo = normalizeText(cardInfo?.cardNo);
@@ -135,10 +109,6 @@ export async function syncAvailableCards({
       card_code: normalizeCardCode(card?.card_code),
     });
   }
-
-  console.log(
-    `[sync-available-cards] cardsByNumber size before return: ${cardsByNumber.size}`
-  );
 
   return Array.from(cardsByNumber.values()).sort(sortCards);
 }
