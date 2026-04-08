@@ -74,8 +74,17 @@ export async function syncAvailableCards({
   for (const userInfo of users) {
     const employeeNo = normalizeText(userInfo?.employeeNo);
     const name = normalizeText(userInfo?.name);
+    const matchesUnassignedPattern = UNASSIGNED_NAME_PATTERN.test(name);
 
-    if (!employeeNo || !UNASSIGNED_NAME_PATTERN.test(name)) {
+    if (!employeeNo || !matchesUnassignedPattern) {
+      if (!matchesUnassignedPattern && name.toLowerCase().includes('unassigned')) {
+        console.log(
+          `[sync-available-cards] non-matching unassigned-like name="${name}" charCodes=${JSON.stringify(
+            [...name].map((c) => c.charCodeAt(0))
+          )}`
+        );
+      }
+
       continue;
     }
 
@@ -86,6 +95,11 @@ export async function syncAvailableCards({
     const cardCode = extractCardCode(name);
     const canonicalEmployeeNo = canonicalizeEmployeeNo(employeeNo);
     const cardResponse = await getCardFn({ employeeNo: canonicalEmployeeNo });
+
+    if (cardCode === 'P86') {
+      console.log('[sync-available-cards] raw getCard response for P86 user', cardResponse);
+    }
+
     const matchedCards = extractCardsFromGetCardResponse(cardResponse, employeeNo);
 
     console.log(
