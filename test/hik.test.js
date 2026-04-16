@@ -329,6 +329,7 @@ test('src/hik.js preserves the public Hik API surface after the module split', a
       'addCard',
       'addUser',
       'deleteUser',
+      'getDoorHistory',
       'getCapabilities',
       'getCard',
       'getMemberEvents',
@@ -432,6 +433,87 @@ test('getMemberEvents uses a provided searchID unchanged', async () => {
     assert.equal(payload?.AcsEventCond?.searchID, 'shared-route-search-id');
     assert.equal(payload?.AcsEventCond?.maxResults, 10);
     assert.equal(payload?.AcsEventCond?.searchResultPosition, 31);
+  } finally {
+    await device.close();
+  }
+});
+
+test('getDoorHistory uses POST AcsEvent with explicit Jamaica-local bounds', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      AcsEvent: {
+        responseStatusStrg: 'OK',
+        totalMatches: 2,
+        InfoList: [],
+      },
+    }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    const result = await hik.getDoorHistory({
+      startTime: '2026-04-14T00:00:00-05:00',
+      endTime: '2026-04-15T00:00:00-05:00',
+    });
+
+    assert.deepEqual(result, {
+      AcsEvent: {
+        responseStatusStrg: 'OK',
+        totalMatches: 2,
+        InfoList: [],
+      },
+    });
+
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(request.method, 'POST');
+    assert.equal(request.route, '/ISAPI/AccessControl/AcsEvent?format=json');
+    assert.equal(typeof payload?.AcsEventCond?.searchID, 'string');
+    assert.ok(payload.AcsEventCond.searchID.length > 0);
+    assert.deepEqual(payload, {
+      AcsEventCond: {
+        searchID: payload.AcsEventCond.searchID,
+        searchResultPosition: 0,
+        maxResults: 500,
+        major: 0,
+        minor: 0,
+        startTime: '2026-04-14T00:00:00-05:00',
+        endTime: '2026-04-15T00:00:00-05:00',
+      },
+    });
+  } finally {
+    await device.close();
+  }
+});
+
+test('getDoorHistory uses a provided searchID unchanged', async () => {
+  const device = createAuthorizedApiServer(({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      AcsEvent: {
+        responseStatusStrg: 'OK',
+        totalMatches: 0,
+        InfoList: [],
+      },
+    }));
+  });
+  const port = await device.start();
+  const hik = await loadHikModule(port);
+
+  try {
+    await hik.getDoorHistory({
+      startTime: '2026-04-14T00:00:00-05:00',
+      endTime: '2026-04-15T00:00:00-05:00',
+      searchID: 'door-history-search-id',
+    });
+
+    const request = device.events.find((event) => event.type === 'authorized');
+    const payload = JSON.parse(request.body);
+
+    assert.equal(payload?.AcsEventCond?.searchID, 'door-history-search-id');
   } finally {
     await device.close();
   }

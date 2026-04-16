@@ -152,6 +152,51 @@ test('processJob dispatches get_member_events jobs and normalizes device events'
   });
 });
 
+test('processJob dispatches get_door_history jobs and preserves the raw device response', async () => {
+  const calls = [];
+  const hikApi = {
+    getDoorHistory: async (payload) => {
+      calls.push(payload);
+      return {
+        AcsEvent: {
+          totalMatches: 2,
+          InfoList: [{ cardNo: '0102857149' }],
+        },
+      };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-get-door-history',
+      type: 'get_door_history',
+      payload: {
+        startTime: '2026-04-14T00:00:00-05:00',
+        endTime: '2026-04-15T00:00:00-05:00',
+        searchID: 'door-history-search-id',
+      },
+    },
+    hikApi
+  );
+
+  assert.deepEqual(calls, [
+    {
+      startTime: '2026-04-14T00:00:00-05:00',
+      endTime: '2026-04-15T00:00:00-05:00',
+      searchID: 'door-history-search-id',
+    },
+  ]);
+  assert.deepEqual(result, {
+    success: true,
+    result: {
+      AcsEvent: {
+        totalMatches: 2,
+        InfoList: [{ cardNo: '0102857149' }],
+      },
+    },
+  });
+});
+
 test('processJob dispatches list_available_slots jobs', async () => {
   const hikApi = {
     listAvailableSlots: async () => ({

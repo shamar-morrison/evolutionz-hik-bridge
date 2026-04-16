@@ -12,7 +12,7 @@ export {
   listAvailableCards,
   searchCards,
 } from './hik/cards.js';
-export { getMemberEvents } from './hik/events.js';
+export { getDoorHistory, getMemberEvents } from './hik/events.js';
 export { syncAvailableCards } from './sync-available-cards.js';
 export {
   listAvailableSlots,

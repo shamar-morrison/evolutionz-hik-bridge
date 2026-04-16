@@ -33,3 +33,25 @@ export async function getMemberEvents({
 
   return response?.AcsEvent ?? response;
 }
+
+export async function getDoorHistory({
+  startTime,
+  endTime,
+  searchID = Date.now().toString(),
+}) {
+  return performIsapiRequest('/ISAPI/AccessControl/AcsEvent?format=json', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      AcsEventCond: {
+        searchID,
+        searchResultPosition: 0,
+        maxResults: 500,
+        major: 0,
+        minor: 0,
+        startTime,
+        endTime,
+      },
+    }),
+  });
+}

@@ -91,6 +91,7 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
  *   revoke_card   - payload: { employeeNo, cardNo }
  *   get_card      - payload: { cardNo } or { employeeNo }
  *   get_member_events - payload: { employeeNoString, maxResults, searchResultPosition, searchID? }
+ *   get_door_history - payload: { startTime, endTime, searchID? }
  *   list_available_cards - payload: {}
  *   sync_available_cards - payload: {}
  *   list_available_slots - payload: {}
@@ -188,6 +189,15 @@ export async function processJob(job, hikApi = hik) {
           totalMatches: getNumericField(acsEvent?.totalMatches, events.length),
         },
       };
+    }
+
+    case 'get_door_history': {
+      const result = await hikApi.getDoorHistory({
+        startTime: payload.startTime,
+        endTime: payload.endTime,
+        searchID: payload.searchID,
+      });
+      return { success: true, result };
     }
 
     case 'list_available_cards': {
