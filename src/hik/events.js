@@ -2,6 +2,7 @@ import { SEARCH_PAGE_SIZE } from './constants.js';
 import { performIsapiRequest, jsonHeaders } from './client.js';
 
 const MEMBER_EVENTS_START_TIME = '2020-01-01T00:00:00';
+export const DOOR_HISTORY_PAGE_SIZE = 10;
 
 export async function getMemberEvents({
   employeeNoString,
@@ -38,6 +39,8 @@ export async function getDoorHistory({
   startTime,
   endTime,
   searchID = Date.now().toString(),
+  searchResultPosition = 0,
+  maxResults = DOOR_HISTORY_PAGE_SIZE,
 }) {
   return performIsapiRequest('/ISAPI/AccessControl/AcsEvent?format=json', {
     method: 'POST',
@@ -45,8 +48,8 @@ export async function getDoorHistory({
     body: JSON.stringify({
       AcsEventCond: {
         searchID,
-        searchResultPosition: 0,
-        maxResults: 500,
+        searchResultPosition,
+        maxResults,
         major: 0,
         minor: 0,
         startTime,

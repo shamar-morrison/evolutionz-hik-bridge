@@ -2,6 +2,7 @@
 // Processes access control jobs from the Supabase queue
 
 import * as hik from './hik.js';
+import { DOOR_HISTORY_PAGE_SIZE } from './hik/events.js';
 import { buildUserInfoPayload } from './hik/users.js';
 import { getNumericField, normalizeList, toBoolean } from './hik/shared.js';
 import { getUserModifyMode } from './hik/config.js';
@@ -76,6 +77,10 @@ function logWriteFailureDiagnostics(jobType, payload, error) {
   };
 
   console.error(`[hik] ${jobType} write failure diagnostics\n${JSON.stringify(diagnostics, null, 2)}`);
+}
+
+function normalizeSearchId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : Date.now().toString();
 }
 
 /**
@@ -192,12 +197,43 @@ export async function processJob(job, hikApi = hik) {
     }
 
     case 'get_door_history': {
-      const result = await hikApi.getDoorHistory({
-        startTime: payload.startTime,
-        endTime: payload.endTime,
-        searchID: payload.searchID,
-      });
-      return { success: true, result };
+      const searchID = normalizeSearchId(payload.searchID);
+      const events = [];
+      let totalMatches = 0;
+      let searchResultPosition = 0;
+
+      while (true) {
+        const acsEventResponse = await hikApi.getDoorHistory({
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          searchID,
+          searchResultPosition,
+          maxResults: DOOR_HISTORY_PAGE_SIZE,
+        });
+        const acsEvent = acsEventResponse?.AcsEvent ?? acsEventResponse;
+        const pageEvents = normalizeList(acsEvent?.InfoList).filter(Boolean);
+
+        events.push(...pageEvents);
+        totalMatches = Math.max(
+          totalMatches,
+          getNumericField(acsEvent?.totalMatches, events.length),
+          events.length
+        );
+
+        if (pageEvents.length < DOOR_HISTORY_PAGE_SIZE) {
+          break;
+        }
+
+        searchResultPosition += DOOR_HISTORY_PAGE_SIZE;
+      }
+
+      return {
+        success: true,
+        result: {
+          events,
+          totalMatches: Math.max(totalMatches, events.length),
+        },
+      };
     }
 
     case 'list_available_cards': {

@@ -152,15 +152,45 @@ test('processJob dispatches get_member_events jobs and normalizes device events'
   });
 });
 
-test('processJob dispatches get_door_history jobs and preserves the raw device response', async () => {
+test('processJob dispatches get_door_history jobs across all device pages and aggregates them', async () => {
   const calls = [];
   const hikApi = {
     getDoorHistory: async (payload) => {
       calls.push(payload);
+
+      if (payload.searchResultPosition === 0) {
+        return {
+          AcsEvent: {
+            totalMatches: '21',
+            InfoList: Array.from({ length: 10 }, (_, index) => ({
+              cardNo: `01028571${String(index).padStart(2, '0')}`,
+              time: `2026-04-14T00:${String(index).padStart(2, '0')}:00-05:00`,
+            })),
+          },
+        };
+      }
+
+      if (payload.searchResultPosition === 10) {
+        return {
+          AcsEvent: {
+            totalMatches: '21',
+            InfoList: Array.from({ length: 10 }, (_, index) => ({
+              cardNo: `01028572${String(index).padStart(2, '0')}`,
+              time: `2026-04-14T01:${String(index).padStart(2, '0')}:00-05:00`,
+            })),
+          },
+        };
+      }
+
       return {
         AcsEvent: {
-          totalMatches: 2,
-          InfoList: [{ cardNo: '0102857149' }],
+          totalMatches: '21',
+          InfoList: [
+            {
+              cardNo: '0102857300',
+              time: '2026-04-14T02:00:00-05:00',
+            },
+          ],
         },
       };
     },
@@ -184,15 +214,122 @@ test('processJob dispatches get_door_history jobs and preserves the raw device r
       startTime: '2026-04-14T00:00:00-05:00',
       endTime: '2026-04-15T00:00:00-05:00',
       searchID: 'door-history-search-id',
+      searchResultPosition: 0,
+      maxResults: 10,
+    },
+    {
+      startTime: '2026-04-14T00:00:00-05:00',
+      endTime: '2026-04-15T00:00:00-05:00',
+      searchID: 'door-history-search-id',
+      searchResultPosition: 10,
+      maxResults: 10,
+    },
+    {
+      startTime: '2026-04-14T00:00:00-05:00',
+      endTime: '2026-04-15T00:00:00-05:00',
+      searchID: 'door-history-search-id',
+      searchResultPosition: 20,
+      maxResults: 10,
     },
   ]);
   assert.deepEqual(result, {
     success: true,
     result: {
-      AcsEvent: {
-        totalMatches: 2,
-        InfoList: [{ cardNo: '0102857149' }],
+      events: [
+        ...Array.from({ length: 10 }, (_, index) => ({
+          cardNo: `01028571${String(index).padStart(2, '0')}`,
+          time: `2026-04-14T00:${String(index).padStart(2, '0')}:00-05:00`,
+        })),
+        ...Array.from({ length: 10 }, (_, index) => ({
+          cardNo: `01028572${String(index).padStart(2, '0')}`,
+          time: `2026-04-14T01:${String(index).padStart(2, '0')}:00-05:00`,
+        })),
+        {
+          cardNo: '0102857300',
+          time: '2026-04-14T02:00:00-05:00',
+        },
+      ],
+      totalMatches: 21,
+    },
+  });
+});
+
+test('processJob dispatches get_door_history jobs until an empty final page after an exact multiple of 10', async () => {
+  const calls = [];
+  const hikApi = {
+    getDoorHistory: async (payload) => {
+      calls.push(payload);
+
+      if (payload.searchResultPosition === 20) {
+        return {
+          AcsEvent: {
+            totalMatches: '20',
+            InfoList: [],
+          },
+        };
+      }
+
+      return {
+        AcsEvent: {
+          totalMatches: '20',
+          InfoList: Array.from({ length: 10 }, (_, index) => ({
+            cardNo: `${payload.searchResultPosition}-${index}`,
+          })),
+        },
+      };
+    },
+  };
+
+  const result = await processJob(
+    {
+      id: 'job-get-door-history-multiple-of-10',
+      type: 'get_door_history',
+      payload: {
+        startTime: '2026-04-14T00:00:00-05:00',
+        endTime: '2026-04-15T00:00:00-05:00',
       },
+    },
+    hikApi
+  );
+
+  assert.deepEqual(
+    calls.map((call) => ({
+      searchID: call.searchID,
+      searchResultPosition: call.searchResultPosition,
+      maxResults: call.maxResults,
+    })),
+    [
+      {
+        searchID: calls[0].searchID,
+        searchResultPosition: 0,
+        maxResults: 10,
+      },
+      {
+        searchID: calls[0].searchID,
+        searchResultPosition: 10,
+        maxResults: 10,
+      },
+      {
+        searchID: calls[0].searchID,
+        searchResultPosition: 20,
+        maxResults: 10,
+      },
+    ]
+  );
+  assert.equal(typeof calls[0].searchID, 'string');
+  assert.ok(calls[0].searchID.length > 0);
+  assert.deepEqual(result, {
+    success: true,
+    result: {
+      events: [
+        ...Array.from({ length: 10 }, (_, index) => ({
+          cardNo: `0-${index}`,
+        })),
+        ...Array.from({ length: 10 }, (_, index) => ({
+          cardNo: `10-${index}`,
+        })),
+      ],
+      totalMatches: 20,
     },
   });
 });

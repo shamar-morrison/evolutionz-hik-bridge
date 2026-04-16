@@ -477,7 +477,7 @@ test('getDoorHistory uses POST AcsEvent with explicit Jamaica-local bounds', asy
       AcsEventCond: {
         searchID: payload.AcsEventCond.searchID,
         searchResultPosition: 0,
-        maxResults: 500,
+        maxResults: 10,
         major: 0,
         minor: 0,
         startTime: '2026-04-14T00:00:00-05:00',
@@ -508,12 +508,16 @@ test('getDoorHistory uses a provided searchID unchanged', async () => {
       startTime: '2026-04-14T00:00:00-05:00',
       endTime: '2026-04-15T00:00:00-05:00',
       searchID: 'door-history-search-id',
+      searchResultPosition: 20,
+      maxResults: 10,
     });
 
     const request = device.events.find((event) => event.type === 'authorized');
     const payload = JSON.parse(request.body);
 
     assert.equal(payload?.AcsEventCond?.searchID, 'door-history-search-id');
+    assert.equal(payload?.AcsEventCond?.searchResultPosition, 20);
+    assert.equal(payload?.AcsEventCond?.maxResults, 10);
   } finally {
     await device.close();
   }
